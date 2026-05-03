@@ -1,0 +1,23 @@
+# Credentials — never commit
+tota/Secrets.swift
+supabase/.env
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Deno
+.deno/
+
+# Node / npm (if any tooling added later)
+node_modules/
