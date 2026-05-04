@@ -7,42 +7,89 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [1.7] — [Inventory: expandInventory, expand-inventory/index.ts]
+Task: [2.7] — [Farm: harvestPlot, harvest-plot/index.ts]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/functions/expand-inventory/index.ts — expandInventory Edge Function
-- [x] Test file (T1.7.1–T1.7.8) with mocked Supabase client
+- [x] supabase/functions/harvest-plot/index.ts — harvestPlot Edge Function
+- [x] supabase/functions/harvest-plot/index_test.ts — test file with mocked Supabase client
 
 Done When:
-- T1.7.1–T1.7.8 all pass
-- expandInventory consumes material via removeItemFromInventory (no direct inventory DELETE)
-- Updates players.inventory_slots JSONB — no other function may do this
-- Error strings match exactly
+- T2.7.1–T2.7.14 all pass
+- Harvest adds available yield to inventory by rolled grade
+- Steal pool, wither penalty, bug penalty, and minimum 1 yield enforced
+- GROWING throws PLOT_NOT_READY; EMPTY throws PLOT_EMPTY
+- Annual crops reset to EMPTY; perpetual crops transition to needsWater:true and keep cropId
+- Harvest awards crop XP and farming skill XP
+- INVENTORY_FULL is captured in itemsFailedDueToFullInventory without aborting harvest
 
 KEY IMPLEMENTATION NOTES:
-- EXPANSION_MAP: expand_wooden_plank→crops(+5,max200), expand_iron_nail→processed(+5,max120), expand_stone_brick→animal_produce(+5,max80), expand_glass_pane→cooked_dishes(+5,max80), expand_bronze_hinge→tools(+5,max60), expand_steel_beam→any(+10,maxFromCATEGORY_MAX)
-- CATEGORY_MAX: crops:200, fish:100, animal_produce:80, processed:120, cooked_dishes:80, tools:60
-- expand_steel_beam: requires targetCategory param → throws STEEL_BEAM_REQUIRES_CATEGORY if missing, INVALID_CATEGORY if category not in CATEGORY_MAX
-- All other materials: category and maxSlots are fixed from EXPANSION_MAP
-- AT_MAX_CAPACITY check BEFORE removeItemFromInventory (don't consume if already maxed)
-- Consume material: call removeItemFromInventory(playerId, materialItemId, 'Normal', 1) — propagates ITEM_NOT_FOUND / INSUFFICIENT_QUANTITY
-- Update slots: players.inventory_slots JSONB patch — spread existing, set [category]: currentMax + slotsToAdd
-- ExpandResult shape: { success: true, category, slotsBefore, slotsAfter }
+- Loads farm_plots and skills from players.
+- Fetches crop config and harvest constants via getConfigs.
+- rollGrade is a Task 2.8 stub returning Normal by default.
+- Adds harvested crops through addItemToInventory only.
+- Captures INVENTORY_FULL failures per grade and continues.
+- Returns HarvestResult: { success, itemsHarvested, itemsFailedDueToFullInventory, xpAwarded, yieldPenalties, plotTransition }.
 
 TEST CASES SUMMARY:
-- T1.7.1: Normal expansion — 1 Wooden Plank, crops at 20 → crops: 20→25, plank consumed
-- T1.7.2: Material not in inventory — 0 Wooden Planks → throws INSUFFICIENT_QUANTITY
-- T1.7.3: Already at max capacity — crops at 200 → throws AT_MAX_CAPACITY:crops:200
-- T1.7.4: Steel beam no target — expand_steel_beam, no targetCategory → throws STEEL_BEAM_REQUIRES_CATEGORY
-- T1.7.5: Steel beam valid target — expand_steel_beam, targetCategory:'fish' → fish slots +10
-- T1.7.6: Three consecutive expansions — 3 Wooden Planks, crops at 20 → crops: 20→25→30→35
-- T1.7.7: Iron nail expands processed — 1 Iron Nail, processed at 15 → processed: 15→20
-- T1.7.8: Invalid material — materialItemId:'fish_catfish' → throws INVALID_EXPANSION_MATERIAL
+- T2.7.1: Clean harvest, no steal — 7 units added, plotTransition EMPTY
+- T2.7.2: Partial steal taken — 5 units added
+- T2.7.3: Full pool stolen — 4 units added
+- T2.7.4: Withered penalty — 4 units
+- T2.7.5: Bug penalty — 4 units
+- T2.7.6: Both penalties — 2 units
+- T2.7.7: Minimum 1 — 1 unit
+- T2.7.8: Harvest GROWING — throws PLOT_NOT_READY
+- T2.7.9: Harvest EMPTY — throws PLOT_EMPTY
+- T2.7.10: Annual resets — cropId:null, state EMPTY
+- T2.7.11: Perpetual transitions — needsWater:true, cropId kept
+- T2.7.12: Tier-1 XP — 10 XP + 10 farming skill XP
+- T2.7.13: Tier-3 XP — 30 XP + 30 farming skill XP
+- T2.7.14: Inventory full partial — one grade added, one grade in itemsFailed list
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 2.7 — COMPLETE
+Task: [2.7] — [Farm: harvestPlot, harvest-plot/index.ts]
+Deliverables all complete. T2.7.1–T2.7.14 pass.
+harvestPlot calculates stolen/penalized yield, adds inventory through helper, awards XP stubs, and resets annual/perpetual plots.
+SPEC_AMBIGUITY: Top-level throws list says NEEDS_WATER should throw PLOT_NOT_READY, but Step 2 requires PLOT_EMPTY.
+
+### Task 2.6 — COMPLETE
+Task: [2.6] — [Farm: applyFertiliser, apply-fertiliser/index.ts]
+Deliverables all complete. T2.6.1–T2.6.8 pass.
+applyFertiliser stores bronze/silver boosts on GROWING plots, enforces caps before writes, uses friend stubs, awards guest_buff_token through inventory helper.
+
+### Task 2.5 — COMPLETE
+Task: [2.5] — [Farm: waterPlot, water-plot/index.ts]
+Deliverables all complete. T2.5.1–T2.5.12 pass.
+waterPlot moves plantedAt/regrowStartedAt backwards to reduce remaining time and uses V1 friend stubs for help action, XP, and notification.
+SPEC_AMBIGUITY: Spec sample computes newTimeRemaining from plantedAt even for perpetual regrow plots; perpetual tests require using regrowStartedAt.
+
+### Task 2.4 — COMPLETE
+Task: [2.4] — [Farm: getFarmState, get-farm-state/index.ts]
+Deliverables all complete. T2.4.1–T2.4.7 pass.
+getFarmState uses one players query and one batched getConfigs query. calculatePlotState is called once per plot with no DB calls inside the map.
+
+### Task 2.3 — COMPLETE
+Task: [2.3] — [Farm: calculatePlotState, lib/farm.ts]
+Deliverables all complete. T2.3.1–T2.3.15 pass.
+calculatePlotState is pure, makes zero DB calls, and derives all state from arguments.
+SPEC_AMBIGUITY: Behavior is not specified when isPerpetualRegrowing is true but regrowStartedAt or regrowTimeSeconds is null.
+
+### Task 2.2 — COMPLETE
+Task: [2.2] — [Farm: plantCrop, plant-crop/index.ts]
+Deliverables all complete. T2.2.1–T2.2.12 pass.
+plantCrop deducts coins via debitCoins, locks yield and stealPool at planting time, and writes entire farm_plots JSONB array back.
+SPEC_AMBIGUITY: plantCrop spec says validateCanAfford throws INSUFFICIENT_FUNDS, but Task 1.5 helper returns canAfford=false.
+SPEC_AMBIGUITY: plantCrop throws list mentions INVALID_CROP_ID, but Step 3 and T2.2.12 require CROP_NOT_FOUND from getCropConfig.
+
+### Task 2.1 — COMPLETE
+Task: [2.1] — [Crops: getCropConfig, getAllCropConfigs, lib/crops.ts]
+Deliverables all complete. T2.1.1–T2.1.9 pass.
+getCropConfig validates cropId against CROP_IDS list before DB call. getAllCropConfigs uses single batch getConfigs call.
 
 ### Task 1.7 — COMPLETE
 Task: [1.7] — [Inventory: expandInventory, expand-inventory/index.ts]
@@ -133,12 +180,14 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 1.6  | removeItemFromInventory    | supabase/functions/lib/inventory.ts            | COMPLETE | Deletes row if quantity hits 0.                 |
 | 1.6  | getInventory               | supabase/functions/lib/inventory.ts            | COMPLETE | Returns all or one category. SPEC_AMBIGUITY on exact shape. |
 | 1.7  | expandInventory            | supabase/functions/expand-inventory/index.ts   | COMPLETE | Consumes material, updates inventory_slots JSONB. |
-| 2.1  | getCropConfig              | supabase/functions/lib/crops.ts                | PENDING | Reads game_config table. Throws CROP_NOT_FOUND. |
-| 2.1  | getAllCropConfigs           | supabase/functions/lib/crops.ts                | PENDING | Batch fetch all 11 Phase 1 crops.               |
-| 2.2  | plantCrop                  | supabase/functions/plant-crop/index.ts         | PENDING | Writes to farm_plots JSONB array.               |
-| 2.3  | calculatePlotState         | supabase/functions/lib/farm.ts                 | PENDING | PURE FUNCTION. Zero DB calls. Pass consts in.   |
-| 2.4  | getFarmState               | supabase/functions/get-farm-state/index.ts     | PENDING | Max 2 DB queries. Returns EnrichedPlot[].       |
-| 2.5  | waterPlot                  | supabase/functions/water-plot/index.ts         | PENDING | Moves plantedAt backwards. Contains STUBs (7.1).|
+| 2.1  | getCropConfig              | supabase/functions/lib/crops.ts                | COMPLETE | Reads game_config table. Throws CROP_NOT_FOUND. |
+| 2.1  | getAllCropConfigs          | supabase/functions/lib/crops.ts                | COMPLETE | Batch fetch all 11 Phase 1 crops.               |
+| 2.2  | plantCrop                  | supabase/functions/plant-crop/index.ts         | COMPLETE | Writes to farm_plots JSONB array.            |
+| 2.3  | calculatePlotState         | supabase/functions/lib/farm.ts                 | COMPLETE | PURE FUNCTION. Zero DB calls. Pass consts in. |
+| 2.4  | getFarmState               | supabase/functions/get-farm-state/index.ts     | COMPLETE | Max 2 DB queries. Returns EnrichedPlot[].    |
+| 2.5  | waterPlot                  | supabase/functions/water-plot/index.ts         | COMPLETE | Moves plantedAt backwards. Contains STUBs (7.1).|
+| 2.6  | applyFertiliser            | supabase/functions/apply-fertiliser/index.ts   | COMPLETE | Stores bronzeBoost/silverBoost on plot. Contains STUBs (7.1, 7.3, 10.1, 12.1). |
+| 2.7  | harvestPlot                | supabase/functions/harvest-plot/index.ts       | COMPLETE | Harvests yield, awards XP, resets/updates plot. Contains STUBs (2.8, 10.1, 10.2). |
 
 ---
 
@@ -150,8 +199,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | supabase/functions/lib/config.ts  | COMPLETE | getConfig(key), getConfigs(keys[])               |
 | supabase/functions/lib/economy.ts | COMPLETE | debitCoins, creditCoins, getBalance, validateCanAfford |
 | supabase/functions/lib/inventory.ts | COMPLETE | addItemToInventory, removeItemFromInventory, getInventory, getCategory |
-| supabase/functions/lib/crops.ts   | PENDING | getCropConfig, getAllCropConfigs, parseCropConfig |
-| supabase/functions/lib/farm.ts    | PENDING | calculatePlotState, PlotConstants, FarmPlot, PlotStateResult |
+| supabase/functions/lib/crops.ts   | COMPLETE | getCropConfig, getAllCropConfigs, parseCropConfig |
+| supabase/functions/lib/farm.ts    | COMPLETE | calculatePlotState, PlotConstants, FarmPlot, PlotStateResult |
 | supabase/functions/lib/supabase.ts | COMPLETE | supabaseAdmin (service_role client)              |
 
 ---
@@ -162,7 +211,7 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | File                        | Status  | Notes                                            |
 |-----------------------------|---------|--------------------------------------------------|
 | TownAndTableAuth.swift      | COMPLETE | loginOnLaunch(). deviceId = identifierForVendor. Stores sessionToken in Keychain. |
-| FarmViewModel.swift         | PENDING | loadFarm(playerId:). Calls get-farm-state.       |
+| FarmViewModel.swift         | COMPLETE | loadFarm(playerId:). Calls get-farm-state.   |
 
 ---
 
@@ -249,13 +298,16 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | STEEL_BEAM_REQUIRES_CATEGORY              | expandInventory            |
 | INVALID_CATEGORY                          | expandInventory            |
 | AT_MAX_CAPACITY:{category}:{current}      | expandInventory            |
-| PLOT_NOT_FOUND:{plotId}                   | plantCrop, waterPlot       |
+| PLOT_NOT_FOUND:{plotId}                   | plantCrop, waterPlot, harvestPlot |
 | PLOT_OCCUPIED:{plotId}                    | plantCrop                  |
 | CROP_NOT_UNLOCKED:{cropId}                | plantCrop                  |
 | PLOT_NOT_GROWING:{state}                  | waterPlot                  |
 | MAX_WATERINGS_REACHED                     | waterPlot                  |
-| NOT_FRIENDS                               | waterPlot                  |
-| HELP_ACTIONS_EXHAUSTED                    | waterPlot                  |
+| NOT_FRIENDS                               | waterPlot, applyFertiliser |
+| HELP_ACTIONS_EXHAUSTED                    | waterPlot, applyFertiliser |
+| FERTILISER_AT_MAX:{plotId}                | applyFertiliser            |
+| PLOT_EMPTY                                | harvestPlot                |
+| PLOT_NOT_READY                            | harvestPlot                |
 
 ---
 
@@ -276,6 +328,7 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | 1.2  | neighbour_score column not defined in schema | ADD to players table: neighbour_score INTEGER NOT NULL DEFAULT 50 |
 | 1.6  | getInventory required by CODEBASE_STATE.md but exact return shape/error cases not defined in task prompt | Implemented `{ playerId, category, items }`, optional category filter, DB_ERROR only |
 | 1.7  | T1.7.2 says 0 Wooden Planks should throw INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND when no stack exists | Test uses a zero-quantity mocked stack to exercise the specified INSUFFICIENT_QUANTITY path without changing the Task 1.6 helper contract |
+| 2.7  | Top-level throws list says NEEDS_WATER should throw PLOT_NOT_READY, but Step 2 requires PLOT_EMPTY | Followed Step 2 exact error string: PLOT_EMPTY |
 
 ---
 
@@ -288,6 +341,9 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | incrementDailyHelpActions | water-plot      | Task 7.1   | Always succeeds                |
 | awardXP                 | water-plot        | Task 10.1  | Logs but does not write        |
 | sendNotification        | water-plot        | Task 12.1  | Logs but does not send         |
+| rollGrade               | harvest-plot      | Task 2.8   | Returns Normal                 |
+| awardXP                 | harvest-plot      | Task 10.1  | Logs but does not write        |
+| awardSkillXP            | harvest-plot      | Task 10.2  | Logs but does not write        |
 
 ---
 
