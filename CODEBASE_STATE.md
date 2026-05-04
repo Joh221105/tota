@@ -7,44 +7,74 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [2.8] — [Farm: rollGrade, harvest-plot/index.ts]
+Task: [3.4] — [Fishing: startFishingSession, submitFishingResult, fishing/index.ts]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/functions/harvest-plot/index.ts — rollGrade implementation and harvestPlot integration
-- [x] supabase/functions/harvest-plot/index_test.ts — test file with mocked Supabase client/random
+- [x] supabase/functions/fishing/index.ts — startFishingSession, submitFishingResult, rollFishingGrade, rollFromWeightTable
+- [x] supabase/functions/fishing/index_test.ts — test file with mocked Supabase client
+- [x] supabase/seed/seed_fishing_config.sql — fishing pools, durations, expiry, legendary chance
 
 Done When:
-- T2.8.1–T2.8.10 all pass
-- rollGrade is pure and returns only valid grades
-- Base grade rates are fetched once in harvestPlot and passed to rollGrade
-- Fertiliser, farming skill, and watering boosts are applied and Normal is reduced with a 1% floor
-- Rates are re-normalised to sum to 1.0
-- Roll order evaluates highest rarity first
-- Seeded/mocked random tests are deterministic
+- T3.4.1–T3.4.11 all pass
+- startFishingSession deducts bait, writes session to players.active_fishing_session, returns token + progressDurationSeconds
+- submitFishingResult validates token + expiry, rolls fish + grade, adds to inventory, clears session, awards XP
+- Grade distribution varies by completionPercent (impatient/std/patient)
+- Legendary ghostcarp chance only on bait_special; triggers sendNotification
 
 KEY IMPLEMENTATION NOTES:
-- rollGrade(cropId, plot, farmingSkillLevel, baseRates) is pure and performs zero DB calls.
-- calculateGradeRates exposes the normalised rates for tests and future reuse.
-- calculatePreNormalisationNormalRate exposes the Normal floor check.
-- harvestPlot now fetches GRADE_* base rates in its existing getConfigs batch.
-- harvestPlot passes baseRates into rollGrade for each harvested unit.
+- active_fishing_session lives in players.active_fishing_session JSONB: {token, baitType, startedAt, expiresAt} | null.
+- Valid baits: 'bait_basic', 'bait_fly', 'bait_special'. Anything else throws INVALID_BAIT_TYPE.
+- FISHING_SESSION_EXPIRY_SECONDS fetched from game_config (300s).
+- FISHING_PROGRESS_DURATION fetched from game_config as Record<string,number>: {bait_basic:60, bait_fly:50, bait_special:90}.
+- Fish pools fetched from game_config: fishing_pool_bait_basic, fishing_pool_bait_fly, fishing_pool_bait_special.
+- rollFishingGrade(completionPercent): <0.5 → impatient (+15% Normal), >=0.5<1.0 → std, ==1.0 → patient (-10% Normal, +5% Silver, +4% Gold, +1% Diamond).
+- FISH_RARITY and FISH_XP are hardcoded maps (no balance reason to configure).
+- Legendary ghostcarp: only bait_special, LEGENDARY_CHANCE_SPECIAL from game_config (0.0002).
+- Session cleared (set to null) on any successful submitFishingResult.
+- awardXP and awardSkillXP are stubs. sendNotification stub on legendary catch.
 
 TEST CASES SUMMARY:
-- T2.8.1: Base distribution — 10,000 seeded rolls within tolerances
-- T2.8.2: Rates sum to 1.0
-- T2.8.3: Max fertiliser effect — Bronze/Silver increase, Normal reduced
-- T2.8.4: Skill 10 vs 0 — non-Normal grades increase
-- T2.8.5: Waterings 3 vs 0 — non-Normal grades increase
-- T2.8.6: Always valid grade
-- T2.8.7: Pure — no Supabase calls and no state changes
-- T2.8.8: Deterministic with seeded random
-- T2.8.9: Legendary in 10M seeded/mock sample
-- T2.8.10: Normal floor
+- T3.4.1: Start session deducts bait — token returned, bait removed from inventory
+- T3.4.2: No bait available — throws INSUFFICIENT_QUANTITY
+- T3.4.3: Already active session — throws FISHING_SESSION_ACTIVE
+- T3.4.4: Early reel grades (1000 submits, completionPercent:0.1) — Normal > 70%
+- T3.4.5: Full bar grades (1000 submits, completionPercent:1.0) — Silver+Gold > standard distribution
+- T3.4.6: Session expired (submit 310s after start) — throws SESSION_EXPIRED
+- T3.4.7: Wrong token — throws INVALID_SESSION_TOKEN
+- T3.4.8: Session cleared on submit — active_fishing_session = null
+- T3.4.9: Fly bait salmon (1000 sessions) — salmon ≈ 50% (±8%)
+- T3.4.10: Legendary XP (mocked roll) — 500 XP, sendNotification called
+- T3.4.11: Basic bait duration — progressDurationSeconds:60
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 3.4 — COMPLETE
+Task: [3.4] — [Fishing: startFishingSession, submitFishingResult, fishing/index.ts]
+Deliverables all complete. T3.4.1–T3.4.11 pass.
+startFishingSession consumes Normal bait through inventory helper and writes players.active_fishing_session JSONB. submitFishingResult validates token/expiry, awards fish through inventory helper, awards XP stubs, sends legendary notification stub, and clears the active session.
+SPEC_AMBIGUITY: Impatient grade adjustment creates negative Gold and Diamond rates; implementation follows literal additive table and normalises without clamping so T3.4.4 can exceed 70% Normal.
+SPEC_AMBIGUITY: Task expects no bait to throw exactly INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND:item:grade for a missing stack and INSUFFICIENT_QUANTITY:have:requested for a short stack.
+
+### Task 3.3 — COMPLETE
+Task: [3.3] — [Fishing Traps: calculateTrapState, collectTrap, traps/index.ts]
+Deliverables all complete. T3.3.1–T3.3.10 pass.
+collectTrap mutates players.fishing_traps JSONB only through players update and uses addItemToInventory for loot.
+SPEC_AMBIGUITY: Junk items are specified as a literal list, not a game_config key.
+
+### Task 3.2 — COMPLETE
+Task: [3.2] — [Animals: feedAnimal, collectAnimalProduce, animals/index.ts]
+Deliverables all complete. T3.2.1–T3.2.13 pass.
+feedAnimal and collectAnimalProduce mutate players.animals JSONB only through players update and use economy/inventory helpers.
+SPEC_AMBIGUITY: collectAnimalProduce hardcodes 0.15 for egg feather side drops, but AnimalProduct also defines dropChance in animal config.
+
+### Task 3.1 — COMPLETE
+Task: [3.1] — [Animals: getAnimalConfig, calculateAnimalHappiness, lib/animals.ts]
+Deliverables all complete. T3.1.1–T3.1.10 pass.
+getAnimalConfig fetches animal_{animalType} from game_config and throws ANIMAL_NOT_FOUND:{animalType}. calculateAnimalHappiness is pure.
+SPEC_AMBIGUITY: Prompt says value is a JSON-encoded AnimalConfig but sample seed JSON omits animalType and displayName.
 
 ### Task 2.8 — COMPLETE
 Task: [2.8] — [Farm: rollGrade, harvest-plot/index.ts]
@@ -162,6 +192,9 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 005_rpc_debit_coins.sql     | APPLIED | debit_coins() Postgres function (SELECT FOR UPDATE, UPDATE players, INSERT coin_transactions) |
 | 006_add_sabotage_log.sql    | APPLIED | Adds sabotage_log column to players   |
 | seed_game_config.sql        | APPLIED | All balance constants + 11 crop configs |
+| seed_animal_config.sql      | APPLIED | V1 animal configs                     |
+| seed_trap_config.sql        | APPLIED | V1 trap configs + trap roll constants |
+| seed_fishing_config.sql     | PENDING | File added. Fishing pools, durations, expiry, legendary chance |
 
 ---
 
@@ -191,6 +224,9 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 2.6  | applyFertiliser            | supabase/functions/apply-fertiliser/index.ts   | COMPLETE | Stores bronzeBoost/silverBoost on plot. Contains STUBs (7.1, 7.3, 10.1, 12.1). |
 | 2.7  | harvestPlot                | supabase/functions/harvest-plot/index.ts       | COMPLETE | Harvests yield, rolls grades, awards XP, resets/updates plot. Contains STUBs (10.1, 10.2). |
 | 2.8  | rollGrade                  | supabase/functions/harvest-plot/index.ts       | COMPLETE | Pure grade roller integrated into harvestPlot. |
+| 3.2  | animals                    | supabase/functions/animals/index.ts            | COMPLETE | feedAnimal and collectAnimalProduce. Contains STUBs (7.1, 7.3, 10.1, 10.2, 12.1). |
+| 3.3  | traps                      | supabase/functions/traps/index.ts              | COMPLETE | calculateTrapState and collectTrap. Contains STUBs (10.1, 10.2). |
+| 3.4  | fishing                    | supabase/functions/fishing/index.ts            | COMPLETE | startFishingSession, submitFishingResult. Contains STUBs (10.1, 10.2, 12.1). |
 
 ---
 
@@ -204,6 +240,7 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | supabase/functions/lib/inventory.ts | COMPLETE | addItemToInventory, removeItemFromInventory, getInventory, getCategory |
 | supabase/functions/lib/crops.ts   | COMPLETE | getCropConfig, getAllCropConfigs, parseCropConfig |
 | supabase/functions/lib/farm.ts    | COMPLETE | calculatePlotState, PlotConstants, FarmPlot, PlotStateResult |
+| supabase/functions/lib/animals.ts | COMPLETE | getAnimalConfig, calculateAnimalHappiness, AnimalConfig, AnimalRecord |
 | supabase/functions/lib/supabase.ts | COMPLETE | supabaseAdmin (service_role client)              |
 
 ---
@@ -311,6 +348,19 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | FERTILISER_AT_MAX:{plotId}                | applyFertiliser            |
 | PLOT_EMPTY                                | harvestPlot                |
 | PLOT_NOT_READY                            | harvestPlot                |
+| ANIMAL_NOT_FOUND:{animalType}             | getAnimalConfig            |
+| ANIMAL_NOT_FOUND:{animalId}               | feedAnimal, collectAnimalProduce |
+| INVALID_PRODUCT:{productItemId}           | collectAnimalProduce       |
+| NEGLECTED_NO_PRODUCE:{animalId}           | collectAnimalProduce       |
+| PRODUCE_NOT_READY:{seconds}               | collectAnimalProduce       |
+| TRAP_NOT_FOUND:{trapId}                   | collectTrap                |
+| TRAP_NOT_READY:{timeRemaining}            | collectTrap                |
+| INVALID_BAIT_TYPE                         | startFishingSession        |
+| FISHING_SESSION_ACTIVE                    | startFishingSession        |
+| NO_ACTIVE_SESSION                         | submitFishingResult        |
+| INVALID_SESSION_TOKEN                     | submitFishingResult        |
+| SESSION_EXPIRED                           | submitFishingResult        |
+| INVALID_COMPLETION_PERCENT                | submitFishingResult        |
 
 ---
 
@@ -333,6 +383,9 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | 1.7  | T1.7.2 says 0 Wooden Planks should throw INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND when no stack exists | Test uses a zero-quantity mocked stack to exercise the specified INSUFFICIENT_QUANTITY path without changing the Task 1.6 helper contract |
 | 2.7  | Top-level throws list says NEEDS_WATER should throw PLOT_NOT_READY, but Step 2 requires PLOT_EMPTY | Followed Step 2 exact error string: PLOT_EMPTY |
 | 2.8  | Max V1 fertiliser, skill 10, and 3 waterings do not drive Normal below 1%, so floor behavior is not observable under only V1 max boosts | Implemented floor exactly and tested V1 max plus an out-of-range boost case for the floor branch |
+| 3.1  | Prompt says value is a JSON-encoded AnimalConfig but sample seed JSON omits animalType and displayName | Seeded full AnimalConfig rows and parseAnimalConfig fills animalType/displayName from animalType when legacy rows omit them |
+| 3.2  | collectAnimalProduce hardcodes 0.15 for egg feather side drops, but AnimalProduct also defines dropChance in animal config | Used animal_feather dropChance from animal config when present, with 0.15 fallback |
+| 3.3  | Junk items are specified as a literal list, not a game_config key | Used the specified literal list `junk_boot`, `junk_net`, `junk_crate` with equal weight |
 
 ---
 
@@ -347,6 +400,16 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | sendNotification        | water-plot        | Task 12.1  | Logs but does not send         |
 | awardXP                 | harvest-plot      | Task 10.1  | Logs but does not write        |
 | awardSkillXP            | harvest-plot      | Task 10.2  | Logs but does not write        |
+| isMutualFriend          | animals           | Task 7.1   | Always returns true            |
+| incrementDailyHelpActions | animals         | Task 7.3   | Always succeeds                |
+| awardXP                 | animals           | Task 10.1  | Logs but does not write        |
+| awardSkillXP            | animals           | Task 10.2  | Logs but does not write        |
+| sendNotification        | animals           | Task 12.1  | Logs but does not send         |
+| awardXP                 | traps             | Task 10.1  | Logs but does not write        |
+| awardSkillXP            | traps             | Task 10.2  | Logs but does not write        |
+| awardXP                 | fishing           | Task 10.1  | Logs but does not write        |
+| awardSkillXP            | fishing           | Task 10.2  | Logs but does not write        |
+| sendNotification        | fishing           | Task 12.1  | Logs but does not send         |
 
 ---
 
@@ -356,64 +419,85 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 
 | Key                                    | Value   | Status  |
 |----------------------------------------|---------|---------|
-| STEAL_WINDOW_SECONDS                   | 60      | PENDING |
-| STEAL_POOL_PERCENT                     | 0.40    | PENDING |
-| STRANGER_DAILY_STEAL_LIMIT             | 3       | PENDING |
-| STEAL_COST_NORMAL                      | 15      | PENDING |
-| STEAL_COST_BRONZE                      | 30      | PENDING |
-| STEAL_COST_SILVER                      | 60      | PENDING |
-| STEAL_COST_GOLD                        | 120     | PENDING |
-| STEAL_COST_DIAMOND                     | 300     | PENDING |
-| STEAL_COST_LEGENDARY                   | 1000    | PENDING |
-| STEAL_UNITS_MIN                        | 1       | PENDING |
-| STEAL_UNITS_MAX                        | 2       | PENDING |
-| NEW_PLAYER_PROTECTION_LEVEL            | 5       | PENDING |
-| GRADE_NORMAL_RATE                      | 0.58    | PENDING |
-| GRADE_BRONZE_RATE                      | 0.25    | PENDING |
-| GRADE_SILVER_RATE                      | 0.12    | PENDING |
-| GRADE_GOLD_RATE                        | 0.04    | PENDING |
-| GRADE_DIAMOND_RATE                     | 0.01    | PENDING |
-| GRADE_LEGENDARY_RATE                   | 0.001   | PENDING |
-| OFFLINE_CAP_SECONDS                    | 57600   | PENDING |
-| PEST_SPAWN_CHANCE                      | 0.10    | PENDING |
-| WEED_TIMER_PENALTY_MULTIPLIER          | 1.25    | PENDING |
-| BUG_YIELD_PENALTY                      | 0.50    | PENDING |
-| WATER_REDUCTION_PERCENT                | 0.15    | PENDING |
-| MAX_WATERINGS_PER_CYCLE                | 3       | PENDING |
-| WITHER_YIELD_MULTIPLIER                | 0.50    | PENDING |
-| WITHER_TIME_MULTIPLIER                 | 2.0     | PENDING |
-| FERTILISER_BRONZE_BOOST                | 0.02    | PENDING |
-| FERTILISER_SILVER_BOOST                | 0.01    | PENDING |
-| FRIEND_FERTILISER_BRONZE_BOOST         | 0.02    | PENDING |
-| FRIEND_FERTILISER_SILVER_BOOST         | 0.01    | PENDING |
-| MAX_FERTILISER_BRONZE_BOOST            | 0.04    | PENDING |
-| MAX_FERTILISER_SILVER_BOOST            | 0.02    | PENDING |
-| RESTAURANT_MULTIPLIER_MAX              | 1.5     | PENDING |
-| RESTAURANT_MULTIPLIER_BUILDUP_SECONDS  | 14400   | PENDING |
-| FAVOURED_DISH_BONUS                    | 1.30    | PENDING |
-| PET_FEED_DURATION_SECONDS              | 43200   | PENDING |
-| PET_FOOD_COST                          | 10      | PENDING |
-| PET_STEAL_BLOCK_CHANCE                 | 0.25    | PENDING |
-| PET_RESTAURANT_BONUS                   | 0.10    | PENDING |
-| PET_YIELD_BONUS                        | 0.10    | PENDING |
-| PET_XP_BONUS                           | 0.15    | PENDING |
-| STARTER_COINS                          | 500     | PENDING |
-| SUNDAY_MARKET_FEE                      | 10000   | PENDING |
-| SUNDAY_MARKET_STALL_SIZE               | 5       | PENDING |
-| LOTTERY_MIN_ENTRY                      | 100     | PENDING |
-| LOTTERY_DIMINISHING_RETURNS_THRESHOLD  | 10000   | PENDING |
-| NOTIFICATION_BATCH_WINDOW_SECONDS      | 1800    | PENDING |
-| crop_lettuce                           | {...}   | PENDING |
-| crop_tomato                            | {...}   | PENDING |
-| crop_cucumber                          | {...}   | PENDING |
-| crop_onion                             | {...}   | PENDING |
-| crop_wheat                             | {...}   | PENDING |
-| crop_potato                            | {...}   | PENDING |
-| crop_jalapeno                          | {...}   | PENDING |
-| crop_sesame                            | {...}   | PENDING |
-| crop_strawberry                        | {...}   | PENDING |
-| crop_blueberry                         | {...}   | PENDING |
-| crop_herb                              | {...}   | PENDING |
+| STEAL_WINDOW_SECONDS                   | 60      | SEEDED  |
+| STEAL_POOL_PERCENT                     | 0.40    | SEEDED  |
+| STRANGER_DAILY_STEAL_LIMIT             | 3       | SEEDED  |
+| STEAL_COST_NORMAL                      | 15      | SEEDED  |
+| STEAL_COST_BRONZE                      | 30      | SEEDED  |
+| STEAL_COST_SILVER                      | 60      | SEEDED  |
+| STEAL_COST_GOLD                        | 120     | SEEDED  |
+| STEAL_COST_DIAMOND                     | 300     | SEEDED  |
+| STEAL_COST_LEGENDARY                   | 1000    | SEEDED  |
+| STEAL_UNITS_MIN                        | 1       | SEEDED  |
+| STEAL_UNITS_MAX                        | 2       | SEEDED  |
+| NEW_PLAYER_PROTECTION_LEVEL            | 5       | SEEDED  |
+| GRADE_NORMAL_RATE                      | 0.58    | SEEDED  |
+| GRADE_BRONZE_RATE                      | 0.25    | SEEDED  |
+| GRADE_SILVER_RATE                      | 0.12    | SEEDED  |
+| GRADE_GOLD_RATE                        | 0.04    | SEEDED  |
+| GRADE_DIAMOND_RATE                     | 0.01    | SEEDED  |
+| GRADE_LEGENDARY_RATE                   | 0.001   | SEEDED  |
+| OFFLINE_CAP_SECONDS                    | 57600   | SEEDED  |
+| PEST_SPAWN_CHANCE                      | 0.10    | SEEDED  |
+| WEED_TIMER_PENALTY_MULTIPLIER          | 1.25    | SEEDED  |
+| BUG_YIELD_PENALTY                      | 0.50    | SEEDED  |
+| WATER_REDUCTION_PERCENT                | 0.15    | SEEDED  |
+| MAX_WATERINGS_PER_CYCLE                | 3       | SEEDED  |
+| WITHER_YIELD_MULTIPLIER                | 0.50    | SEEDED  |
+| WITHER_TIME_MULTIPLIER                 | 2.0     | SEEDED  |
+| FERTILISER_BRONZE_BOOST                | 0.02    | SEEDED  |
+| FERTILISER_SILVER_BOOST                | 0.01    | SEEDED  |
+| FRIEND_FERTILISER_BRONZE_BOOST         | 0.02    | SEEDED  |
+| FRIEND_FERTILISER_SILVER_BOOST         | 0.01    | SEEDED  |
+| MAX_FERTILISER_BRONZE_BOOST            | 0.04    | SEEDED  |
+| MAX_FERTILISER_SILVER_BOOST            | 0.02    | SEEDED  |
+| RESTAURANT_MULTIPLIER_MAX              | 1.5     | SEEDED  |
+| RESTAURANT_MULTIPLIER_BUILDUP_SECONDS  | 14400   | SEEDED  |
+| FAVOURED_DISH_BONUS                    | 1.30    | SEEDED  |
+| PET_FEED_DURATION_SECONDS              | 43200   | SEEDED  |
+| PET_FOOD_COST                          | 10      | SEEDED  |
+| PET_STEAL_BLOCK_CHANCE                 | 0.25    | SEEDED  |
+| PET_RESTAURANT_BONUS                   | 0.10    | SEEDED  |
+| PET_YIELD_BONUS                        | 0.10    | SEEDED  |
+| PET_XP_BONUS                           | 0.15    | SEEDED  |
+| STARTER_COINS                          | 500     | SEEDED  |
+| SUNDAY_MARKET_FEE                      | 10000   | SEEDED  |
+| SUNDAY_MARKET_STALL_SIZE               | 5       | SEEDED  |
+| LOTTERY_MIN_ENTRY                      | 100     | SEEDED  |
+| LOTTERY_DIMINISHING_RETURNS_THRESHOLD  | 10000   | SEEDED  |
+| NOTIFICATION_BATCH_WINDOW_SECONDS      | 1800    | SEEDED  |
+| crop_lettuce                           | {...}   | SEEDED  |
+| crop_tomato                            | {...}   | SEEDED  |
+| crop_cucumber                          | {...}   | SEEDED  |
+| crop_onion                             | {...}   | SEEDED  |
+| crop_wheat                             | {...}   | SEEDED  |
+| crop_potato                            | {...}   | SEEDED  |
+| crop_jalapeno                          | {...}   | SEEDED  |
+| crop_sesame                            | {...}   | SEEDED  |
+| crop_strawberry                        | {...}   | SEEDED  |
+| crop_blueberry                         | {...}   | SEEDED  |
+| crop_herb                              | {...}   | SEEDED  |
+| animal_cow                             | {...}   | SEEDED  |
+| animal_chicken                         | {...}   | SEEDED  |
+| trap_wooden_trap                       | {...}   | SEEDED  |
+| trap_wire_trap                         | {...}   | SEEDED  |
+| trap_deep_trap                         | {...}   | SEEDED  |
+| TRAP_WORN_CHANCE                       | 0.10    | SEEDED  |
+| TRAP_JUNK_CHANCE                       | 0.05    | SEEDED  |
+| TRAP_GRADE_NORMAL                      | 0.65    | SEEDED  |
+| TRAP_GRADE_BRONZE                      | 0.25    | SEEDED  |
+| TRAP_GRADE_SILVER                      | 0.08    | SEEDED  |
+| TRAP_GRADE_GOLD                        | 0.02    | SEEDED  |
+| TRAP_GRADE_DIAMOND                     | 0.001   | SEEDED  |
+| TRAP_WORN_NORMAL                       | 0.85    | SEEDED  |
+| TRAP_WORN_BRONZE                       | 0.12    | SEEDED  |
+| TRAP_WORN_SILVER                       | 0.03    | SEEDED  |
+| FISHING_PROGRESS_DURATION              | {...}   | PENDING |
+| FISHING_SESSION_EXPIRY_SECONDS         | 300     | PENDING |
+| LEGENDARY_CHANCE_SPECIAL               | 0.0002  | PENDING |
+| fishing_pool_bait_basic                | [...]   | PENDING |
+| fishing_pool_bait_fly                  | [...]   | PENDING |
+| fishing_pool_bait_special              | [...]   | PENDING |
 
 ---
 
