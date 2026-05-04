@@ -5,6 +5,10 @@ export interface QueryResult<T> {
 
 export interface SupabaseAdminClient {
   from(table: string): unknown;
+  rpc?(
+    functionName: string,
+    params: Record<string, unknown>,
+  ): Promise<QueryResult<unknown>>;
 }
 
 let configured = false;
@@ -31,7 +35,9 @@ export let supabaseAdmin: SupabaseAdminClient = {
  */
 async function importSupabaseSdk(
   specifier: string,
-): Promise<{ createClient: (url: string, key: string, options: unknown) => unknown }> {
+): Promise<
+  { createClient: (url: string, key: string, options: unknown) => unknown }
+> {
   return await import(specifier);
 }
 
@@ -60,7 +66,9 @@ export async function ensureSupabaseAdminFromEnv(): Promise<void> {
     throw new Error("SUPABASE_ENV_MISSING");
   }
 
-  const { createClient } = await importSupabaseSdk("jsr:" + "@supabase/supabase-js@2");
+  const { createClient } = await importSupabaseSdk(
+    "jsr:" + "@supabase/supabase-js@2",
+  );
   supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,

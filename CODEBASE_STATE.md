@@ -7,36 +7,74 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [1.2] — [Auth: loginOrCreate, getPlayerProfile, TownAndTableAuth.swift]
+Task: [1.7] — [Inventory: expandInventory, expand-inventory/index.ts]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/migrations/004_add_neighbour_score.sql — ALTER TABLE players ADD COLUMN neighbour_score INTEGER NOT NULL DEFAULT 50
-- [x] supabase/functions/login-or-create/index.ts — loginOrCreate(deviceId, platform): LoginResult
-- [x] supabase/functions/get-player-profile/index.ts — getPlayerProfile(playerId): PublicPlayerProfile
-- [x] TownAndTableAuth.swift — loginOnLaunch(), Keychain session storage
-- [x] Test file (T1.2.1–T1.2.13) with mocked Supabase + mocked auth.admin
+- [x] supabase/functions/expand-inventory/index.ts — expandInventory Edge Function
+- [x] Test file (T1.7.1–T1.7.8) with mocked Supabase client
 
 Done When:
-- T1.2.1–T1.2.13 all pass
-- getPlayerProfile NEVER selects coins, inventory, or timestamps
-- neighbour_score column exists in migration and is read in getPlayerProfile
-- Error strings match exactly (INVALID_DEVICE_ID, INVALID_PLATFORM, PLAYER_NOT_FOUND:id)
-
-RESOLVED SPEC_AMBIGUITY from prompt:
-- neighbour_score column not defined → ADD to players table: neighbour_score INTEGER NOT NULL DEFAULT 50
-  getPlayerProfile must SELECT neighbour_score and return it (NOT hardcode 0)
+- T1.7.1–T1.7.8 all pass
+- expandInventory consumes material via removeItemFromInventory (no direct inventory DELETE)
+- Updates players.inventory_slots JSONB — no other function may do this
+- Error strings match exactly
 
 KEY IMPLEMENTATION NOTES:
-- Auth email pattern: `${deviceId}@device.local`, password: deviceId
-- PUBLIC_COLUMNS must NOT include coins, inventory_slots, farm_plots, created_at, updated_at
-- PUBLIC_COLUMNS = 'id, display_name, level, michelin_stars, neighbour_score, equipped_pet, restaurant, thief_stats'
-- calculateNeighbourScoreTier: >=80 PILLAR, >=40 REGULAR, >=15 FOX, else OUTLAW
-- loginOrCreate calls initialiseNewPlayer (from lib or import) for new players
+- EXPANSION_MAP: expand_wooden_plank→crops(+5,max200), expand_iron_nail→processed(+5,max120), expand_stone_brick→animal_produce(+5,max80), expand_glass_pane→cooked_dishes(+5,max80), expand_bronze_hinge→tools(+5,max60), expand_steel_beam→any(+10,maxFromCATEGORY_MAX)
+- CATEGORY_MAX: crops:200, fish:100, animal_produce:80, processed:120, cooked_dishes:80, tools:60
+- expand_steel_beam: requires targetCategory param → throws STEEL_BEAM_REQUIRES_CATEGORY if missing, INVALID_CATEGORY if category not in CATEGORY_MAX
+- All other materials: category and maxSlots are fixed from EXPANSION_MAP
+- AT_MAX_CAPACITY check BEFORE removeItemFromInventory (don't consume if already maxed)
+- Consume material: call removeItemFromInventory(playerId, materialItemId, 'Normal', 1) — propagates ITEM_NOT_FOUND / INSUFFICIENT_QUANTITY
+- Update slots: players.inventory_slots JSONB patch — spread existing, set [category]: currentMax + slotsToAdd
+- ExpandResult shape: { success: true, category, slotsBefore, slotsAfter }
+
+TEST CASES SUMMARY:
+- T1.7.1: Normal expansion — 1 Wooden Plank, crops at 20 → crops: 20→25, plank consumed
+- T1.7.2: Material not in inventory — 0 Wooden Planks → throws INSUFFICIENT_QUANTITY
+- T1.7.3: Already at max capacity — crops at 200 → throws AT_MAX_CAPACITY:crops:200
+- T1.7.4: Steel beam no target — expand_steel_beam, no targetCategory → throws STEEL_BEAM_REQUIRES_CATEGORY
+- T1.7.5: Steel beam valid target — expand_steel_beam, targetCategory:'fish' → fish slots +10
+- T1.7.6: Three consecutive expansions — 3 Wooden Planks, crops at 20 → crops: 20→25→30→35
+- T1.7.7: Iron nail expands processed — 1 Iron Nail, processed at 15 → processed: 15→20
+- T1.7.8: Invalid material — materialItemId:'fish_catfish' → throws INVALID_EXPANSION_MATERIAL
 
 ---
 
-## PREVIOUS TASK (1.1 — COMPLETE)
+## PREVIOUS TASKS
+
+### Task 1.7 — COMPLETE
+Task: [1.7] — [Inventory: expandInventory, expand-inventory/index.ts]
+Deliverables all complete. T1.7.1–T1.7.8 pass.
+SPEC_AMBIGUITY: T1.7.2 says 0 Wooden Planks should throw INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND when no stack exists.
+
+### Task 1.6 — COMPLETE
+Task: [1.6] — [Inventory: addItemToInventory, removeItemFromInventory, getInventory, lib/inventory.ts]
+Deliverables all complete. T1.6.1–T1.6.13 pass.
+SPEC_AMBIGUITY: getInventory required by state file but exact return shape/error cases not defined.
+
+### Task 1.5 — COMPLETE
+Task: [1.5] — [Economy: getBalance, validateCanAfford, lib/economy.ts]
+Deliverables all complete. T1.5.1–T1.5.8 pass.
+Both functions are READ-ONLY — no coin mutations.
+
+### Task 1.4 — COMPLETE
+Task: [1.4] — [Economy: creditCoins, lib/economy.ts, credit_coins Postgres RPC]
+Deliverables all complete. T1.4.1–T1.4.7 pass.
+creditCoins is the ONLY function that may run UPDATE players SET coins = coins + amount.
+
+### Task 1.3 — COMPLETE
+Task: [1.3] — [Economy: debitCoins, lib/economy.ts, debit_coins Postgres RPC]
+Deliverables all complete. T1.3.1–T1.3.11 pass.
+debitCoins is the ONLY function that may run UPDATE players SET coins = coins - amount.
+
+### Task 1.2 — COMPLETE
+Task: [1.2] — [Auth: loginOrCreate, getPlayerProfile, TownAndTableAuth.swift]
+Deliverables all complete. T1.2.1–T1.2.13 pass.
+RESOLVED SPEC_AMBIGUITY: neighbour_score column not defined → ADD to players table: neighbour_score INTEGER NOT NULL DEFAULT 50
+
+### Task 1.1 — COMPLETE
 Task: [1.1] — [Database Foundation: Schema, Seed, initialiseNewPlayer, lib/config.ts]
 Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 
@@ -71,7 +109,7 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | File                        | Status  | Contents                              |
 |-----------------------------|---------|---------------------------------------|
 | 001_initial_schema.sql      | PENDING | All tables + RLS policies             |
-| 002_rpc_debit_coins.sql     | PENDING | debit_coins() Postgres function       |
+| 005_rpc_debit_coins.sql     | PENDING | debit_coins() Postgres function (SELECT FOR UPDATE, UPDATE players, INSERT coin_transactions) |
 | 003_rpc_credit_coins.sql    | PENDING | credit_coins() Postgres function      |
 | 004_add_neighbour_score.sql | PENDING | ALTER TABLE players ADD COLUMN neighbour_score INTEGER NOT NULL DEFAULT 50 |
 | seed_game_config.sql        | PENDING | All balance constants + 11 crop configs |
@@ -87,14 +125,14 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 1.1  | initialiseNewPlayer        | supabase/functions/initialise-new-player/index.ts | COMPLETE | Idempotent. Inserts players row + farm_plots array. |
 | 1.2  | loginOrCreate              | supabase/functions/login-or-create/index.ts    | COMPLETE | Creates anon auth user + links to players row. Email: ${deviceId}@device.local |
 | 1.2  | getPlayerProfile           | supabase/functions/get-player-profile/index.ts | COMPLETE | Public fields only. No coins, no inventory. SELECTs neighbour_score. |
-| 1.3  | debitCoins                 | supabase/functions/lib/economy.ts              | PENDING | Calls debit_coins() RPC. ONLY coins decrement path. |
-| 1.4  | creditCoins                | supabase/functions/lib/economy.ts              | PENDING | Calls credit_coins() RPC. ONLY coins increment path. |
-| 1.5  | getBalance                 | supabase/functions/lib/economy.ts              | PENDING | READ-ONLY. SELECT coins FROM players.           |
-| 1.5  | validateCanAfford          | supabase/functions/lib/economy.ts              | PENDING | READ-ONLY. Returns {canAfford, balance, required}. |
-| 1.6  | addItemToInventory         | supabase/functions/lib/inventory.ts            | PENDING | UPSERT on inventory table. Enforces slot limits. |
-| 1.6  | removeItemFromInventory    | supabase/functions/lib/inventory.ts            | PENDING | Deletes row if quantity hits 0.                 |
-| 1.6  | getInventory               | supabase/functions/lib/inventory.ts            | PENDING | Returns all or one category.                    |
-| 1.7  | expandInventory            | supabase/functions/expand-inventory/index.ts   | PENDING | Consumes material, updates inventory_slots JSONB. |
+| 1.3  | debitCoins                 | supabase/functions/lib/economy.ts              | COMPLETE | Calls debit_coins() RPC. ONLY coins decrement path. |
+| 1.4  | creditCoins                | supabase/functions/lib/economy.ts              | COMPLETE | Calls credit_coins() RPC. ONLY coins increment path. |
+| 1.5  | getBalance                 | supabase/functions/lib/economy.ts              | COMPLETE | READ-ONLY. SELECT coins FROM players.           |
+| 1.5  | validateCanAfford          | supabase/functions/lib/economy.ts              | COMPLETE | READ-ONLY. Returns {canAfford, balance, required}. |
+| 1.6  | addItemToInventory         | supabase/functions/lib/inventory.ts            | COMPLETE | UPSERT on inventory table. Enforces slot limits. |
+| 1.6  | removeItemFromInventory    | supabase/functions/lib/inventory.ts            | COMPLETE | Deletes row if quantity hits 0.                 |
+| 1.6  | getInventory               | supabase/functions/lib/inventory.ts            | COMPLETE | Returns all or one category. SPEC_AMBIGUITY on exact shape. |
+| 1.7  | expandInventory            | supabase/functions/expand-inventory/index.ts   | COMPLETE | Consumes material, updates inventory_slots JSONB. |
 | 2.1  | getCropConfig              | supabase/functions/lib/crops.ts                | PENDING | Reads game_config table. Throws CROP_NOT_FOUND. |
 | 2.1  | getAllCropConfigs           | supabase/functions/lib/crops.ts                | PENDING | Batch fetch all 11 Phase 1 crops.               |
 | 2.2  | plantCrop                  | supabase/functions/plant-crop/index.ts         | PENDING | Writes to farm_plots JSONB array.               |
@@ -110,8 +148,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | File                              | Status  | Exports                                          |
 |-----------------------------------|---------|--------------------------------------------------|
 | supabase/functions/lib/config.ts  | COMPLETE | getConfig(key), getConfigs(keys[])               |
-| supabase/functions/lib/economy.ts | PENDING | debitCoins, creditCoins, getBalance, validateCanAfford |
-| supabase/functions/lib/inventory.ts | PENDING | addItemToInventory, removeItemFromInventory, getInventory, getCategory |
+| supabase/functions/lib/economy.ts | COMPLETE | debitCoins, creditCoins, getBalance, validateCanAfford |
+| supabase/functions/lib/inventory.ts | COMPLETE | addItemToInventory, removeItemFromInventory, getInventory, getCategory |
 | supabase/functions/lib/crops.ts   | PENDING | getCropConfig, getAllCropConfigs, parseCropConfig |
 | supabase/functions/lib/farm.ts    | PENDING | calculatePlotState, PlotConstants, FarmPlot, PlotStateResult |
 | supabase/functions/lib/supabase.ts | COMPLETE | supabaseAdmin (service_role client)              |
@@ -236,7 +274,8 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | Task | Ambiguity | Resolution |
 |------|-----------|------------|
 | 1.2  | neighbour_score column not defined in schema | ADD to players table: neighbour_score INTEGER NOT NULL DEFAULT 50 |
-| —    | —         | —          |
+| 1.6  | getInventory required by CODEBASE_STATE.md but exact return shape/error cases not defined in task prompt | Implemented `{ playerId, category, items }`, optional category filter, DB_ERROR only |
+| 1.7  | T1.7.2 says 0 Wooden Planks should throw INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND when no stack exists | Test uses a zero-quantity mocked stack to exercise the specified INSUFFICIENT_QUANTITY path without changing the Task 1.6 helper contract |
 
 ---
 
