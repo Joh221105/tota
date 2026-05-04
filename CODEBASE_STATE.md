@@ -7,44 +7,63 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [4.2] — [Cooking: startCookingJob, collectCookingOutput, cooking/index.ts]
+Task: [5.3] — [Restaurant Staff: hireStaff, upgradeStaff, calculateStaffBonuses]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/functions/cooking/index.ts — startCookingJob, collectCookingOutput
-- [x] supabase/functions/cooking/index_test.ts — test file with mocked Supabase client
-- [x] supabase/seed/seed_cooking_config.sql — 12 cooking recipes + COOKING_XP_BY_TIER
+- [x] supabase/functions/restaurant/index.ts — hireStaff, upgradeStaff, calculateStaffBonuses
+- [x] supabase/functions/restaurant/index_test.ts — T5.3 test cases with mocked Supabase client
+- [x] supabase/seed/seed_restaurant_config.sql — staff_head_chef, staff_maitre_d, staff_promoter, staff_cleaner, staff_guard
 
 Done When:
-- T4.2.1–T4.2.10 all pass
-- startCookingJob validates all inputs before removal, writes slot RUNNING to players.cooking_slots, awards XP + cooking skill XP from COOKING_XP_BY_TIER
-- Slot c3 throws SLOT_NOT_UNLOCKED:c3 below level 25; slot c4 throws SLOT_NOT_UNLOCKED:c4 below level 40
-- collectCookingOutput rolls output grade from inputGrades, adds dish_ output to cooked_dishes inventory, clears slot; PAUSES on INVENTORY_FULL
+- T5.3.1–T5.3.10 all pass
+- hireStaff fetches staff config, debits coins through debitCoins, writes restaurant.staff[staffType] tier 1
+- upgradeStaff debits upgrade cost through debitCoins and increments hired staff tier
+- calculateStaffBonuses is pure and returns head chef, maitre d, guard, promoter, and cleaner bonuses
 
 KEY IMPLEMENTATION NOTES:
-- cooking_slots lives in players.cooking_slots JSONB column (slotIds c1,c2,c3,c4).
-- CookingSlot shape matches ProcessingSlot: {slotId, recipeId, state:'EMPTY'|'RUNNING'|'COMPLETE'|'PAUSED', startedAt, inputGrades}.
-- inputGrades param to startCookingJob is Record<itemId, grade>; stored flat array (one entry per qty unit).
-- Grade output reuses Task 4.1 weighted average rollOutputGrade.
-- Cooking recipe configs use concrete inventory item IDs (processed_bun, animal_beef, crop_lettuce, etc.) and dish_ output IDs.
-- COOKING_XP_BY_TIER fetched from game_config; no hardcoded XP values in implementation.
-- PAUSED state keeps recipeId + inputGrades; collectCookingOutput retries and clears when inventory has space.
+- Restaurant state lives in players.restaurant JSONB column.
+- Staff records live in restaurant.staff as Record<staffType, StaffRecord>.
+- Staff configs are read from game_config keys staff_head_chef, staff_maitre_d, staff_promoter, staff_cleaner, staff_guard.
+- Head Chef tiers return revenue multipliers 1.15, 1.25, 1.40.
+- Maitre D returns customer multiplier 1.20 for any hired tier.
+- Guard tiers return steal reduction 0.30/0.50 and alerts true at tier 2+.
 
 TEST CASES SUMMARY:
-- T4.2.1: Start Classic Burger — ingredients removed, c1 RUNNING
-- T4.2.2: Collect Cheeseburger — dish_cheeseburger in cooked_dishes
-- T4.2.3: Grade inheritance — Gold+Gold+Normal skews Silver/Gold
-- T4.2.4: Slot c3 locked at 24 — throws SLOT_NOT_UNLOCKED:c3
-- T4.2.5: Slot c3 unlocked at 25 — success
-- T4.2.6: Slot c4 at Level 40 — success
-- T4.2.7: Cooking paused on full — slot PAUSED
-- T4.2.8: Tier-2 XP — 40 XP + 40 cooking skill XP
-- T4.2.9: Pre-validation — throws INSUFFICIENT_INGREDIENTS, nothing removed
-- T4.2.10: All 12 recipes accessible — getConfig(recipeId) succeeds
+- T5.3.1: Hire Head Chef — 500g deducted, staff.head_chef.tier 1
+- T5.3.2: Hire twice throws STAFF_ALREADY_HIRED:head_chef
+- T5.3.3: Upgrade Head Chef t1 to t2 — 1500g deducted, tier 2
+- T5.3.4: Upgrade at max tier throws STAFF_AT_MAX_TIER:head_chef
+- T5.3.5: No staff neutral bonuses
+- T5.3.6: Head Chef t1 revenue multiplier 1.15
+- T5.3.7: Head Chef t2 revenue multiplier 1.25
+- T5.3.8: Guard t1 steal reduction 0.30, alerts false
+- T5.3.9: Guard t2 steal reduction 0.50, alerts true
+- T5.3.10: calculateStaffBonuses makes zero Supabase calls
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 5.3 — COMPLETE
+Task: [5.3] — [Restaurant Staff: hireStaff, upgradeStaff, calculateStaffBonuses]
+Deliverables all complete. T5.3.1–T5.3.10 pass.
+hireStaff reads staff config, blocks duplicate hires, debits STAFF_HIRE through debitCoins, and writes restaurant.staff[staffType] with tier 1. upgradeStaff blocks missing and max-tier staff, debits STAFF_UPGRADE through debitCoins, and increments tier. calculateStaffBonuses is pure and returns head chef, maitre d, guard, promoter, and cleaner bonuses.
+SPEC_AMBIGUITY: Task 5.2 accepted unspecified staff JSON while Task 5.3 defines Record<staffType, StaffRecord>; implementation tolerates legacy array-shaped staff but writes 5.3 record-shaped staff.
+
+### Task 5.2 — COMPLETE
+Task: [5.2] — [Restaurant: collectRestaurantEarnings, getFavouredDish]
+Deliverables all complete. T5.2.1–T5.2.10 pass.
+collectRestaurantEarnings sells listed dishes by tier customer rate and demand weight, applies grade/time/favoured/staff/decor multipliers, credits coins through creditCoins, removes depleted listings, updates xpAwardedDate once per UTC day, and writes players.restaurant once at end. getFavouredDish follows the deterministic hash spec.
+SPEC_AMBIGUITY: Task 5.2 calls calculateStaffBonuses but does not define restaurant.staff shape; implementation accepts array entries or object keys with role/type/staffType names.
+SPEC_AMBIGUITY: Task 5.2 recipe pseudocode reads baseGoldValue, but existing cooking recipe configs use goldValue; implementation supports baseGoldValue first and falls back to goldValue.
+SPEC_AMBIGUITY: Task 5.2 maps side_dish to dish_onion_rings_dish, while Task 4.2 cooking output and demand config use dish_onion_rings.
+
+### Task 5.1 — COMPLETE
+Task: [5.1] — [Restaurant: listDishOnMenu, unlistDishFromMenu, getRestaurantState, calculateTimeMultiplier, restaurant/index.ts]
+Deliverables all complete. T5.1.1–T5.1.10 pass.
+listDishOnMenu validates dish_ prefix, enforces restaurant tier menu slot limits by unique dishId, removes cooked dishes through inventory helper, updates players.restaurant listings, and resets menuLastChangedAt. unlistDishFromMenu returns listed dishes through inventory helper and removes listings. getRestaurantState returns currentMultiplier, menu slot usage, and restaurant fields.
+SPEC_AMBIGUITY: removeItemFromInventory reports short stacks as INSUFFICIENT_QUANTITY:{have}:{requested}, while Task 5.1 expects exact bare INSUFFICIENT_QUANTITY for listing more than owned.
 
 ### Task 4.2 — COMPLETE
 Task: [4.2] — [Cooking: startCookingJob, collectCookingOutput]
@@ -209,8 +228,9 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | seed_animal_config.sql      | APPLIED | V1 animal configs                     |
 | seed_trap_config.sql        | APPLIED | V1 trap configs + trap roll constants |
 | seed_fishing_config.sql     | APPLIED | Fishing pools, durations, expiry, legendary chance             |
-| seed_processing_config.sql  | PENDING | 14 recipe configs + CRATE_RANDOM_LOOT                          |
-| seed_cooking_config.sql     | PENDING | 12 cooking recipes + COOKING_XP_BY_TIER                        |
+| seed_processing_config.sql  | APPLIED | 14 recipe configs + CRATE_RANDOM_LOOT                          |
+| seed_cooking_config.sql     | APPLIED | 12 cooking recipes + COOKING_XP_BY_TIER                        |
+| seed_restaurant_config.sql  | APPLIED | Restaurant slot, earnings, and staff configs                   |
 
 ---
 
@@ -245,6 +265,7 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 3.4  | fishing                    | supabase/functions/fishing/index.ts            | COMPLETE | startFishingSession, submitFishingResult. Contains STUBs (10.1, 10.2, 12.1). |
 | 4.1  | processing                 | supabase/functions/processing/index.ts         | COMPLETE | startProcessingJob, calculateSlotState, collectProcessingOutput, rollOutputGrade, rollCrateLoot. |
 | 4.2  | cooking                    | supabase/functions/cooking/index.ts            | COMPLETE | startCookingJob, collectCookingOutput. Contains STUBs (10.1, 10.2). |
+| 5.1-5.3 | restaurant              | supabase/functions/restaurant/index.ts         | COMPLETE | Menu listing/state, earnings, favoured dishes, and staff hire/upgrade. |
 
 ---
 
@@ -427,6 +448,9 @@ interface CookingRecipe {
 | RECIPE_NOT_UNLOCKED                       | startProcessingJob, startCookingJob |
 | INSUFFICIENT_INGREDIENTS:{recipeId}:{itemId} | startProcessingJob, startCookingJob |
 | JOB_NOT_COMPLETE:{state}                  | collectProcessingOutput, collectCookingOutput |
+| INVALID_DISH_ID:{dishId}                  | listDishOnMenu                     |
+| MENU_FULL:{slotLimit}                     | listDishOnMenu                     |
+| LISTING_NOT_FOUND:{dishId}:{grade}        | unlistDishFromMenu                 |
 
 ---
 
@@ -564,34 +588,42 @@ interface CookingRecipe {
 | fishing_pool_bait_basic                | [...]   | SEEDED  |
 | fishing_pool_bait_fly                  | [...]   | SEEDED  |
 | fishing_pool_bait_special              | [...]   | SEEDED  |
-| recipe_bun                             | {...}   | PENDING |
-| recipe_cheese                          | {...}   | PENDING |
-| recipe_pickles                         | {...}   | PENDING |
-| recipe_bacon                           | {...}   | PENDING |
-| recipe_ketchup                         | {...}   | PENDING |
-| recipe_mayo                            | {...}   | PENDING |
-| recipe_fries                           | {...}   | PENDING |
-| recipe_onion_rings                     | {...}   | PENDING |
-| recipe_fly_bait                        | {...}   | PENDING |
-| recipe_special_bait                    | {...}   | PENDING |
-| recipe_recycle_boot                    | {...}   | PENDING |
-| recipe_recycle_net                     | {...}   | PENDING |
-| recipe_recycle_crate                   | {...}   | PENDING |
-| recipe_recycle_mixed                   | {...}   | PENDING |
-| CRATE_RANDOM_LOOT                      | [...]   | PENDING |
-| recipe_classic_burger                  | {...}   | PENDING |
-| recipe_cheeseburger                    | {...}   | PENDING |
-| recipe_egg_burger                      | {...}   | PENDING |
-| recipe_bacon_burger                    | {...}   | PENDING |
-| recipe_fish_fillet                     | {...}   | PENDING |
-| recipe_spicy_burger                    | {...}   | PENDING |
-| recipe_shrimp_burger                   | {...}   | PENDING |
-| recipe_crab_burger                     | {...}   | PENDING |
-| recipe_tuna_melt                       | {...}   | PENDING |
-| recipe_fries_dish                      | {...}   | PENDING |
-| recipe_onion_rings_dish                | {...}   | PENDING |
-| recipe_strawberry_milkshake            | {...}   | PENDING |
-| COOKING_XP_BY_TIER                     | {...}   | PENDING |
+| recipe_bun                             | {...}   | SEEDED  |
+| recipe_cheese                          | {...}   | SEEDED  |
+| recipe_pickles                         | {...}   | SEEDED  |
+| recipe_bacon                           | {...}   | SEEDED  |
+| recipe_ketchup                         | {...}   | SEEDED  |
+| recipe_mayo                            | {...}   | SEEDED  |
+| recipe_fries                           | {...}   | SEEDED  |
+| recipe_onion_rings                     | {...}   | SEEDED  |
+| recipe_fly_bait                        | {...}   | SEEDED  |
+| recipe_special_bait                    | {...}   | SEEDED  |
+| recipe_recycle_boot                    | {...}   | SEEDED  |
+| recipe_recycle_net                     | {...}   | SEEDED  |
+| recipe_recycle_crate                   | {...}   | SEEDED  |
+| recipe_recycle_mixed                   | {...}   | SEEDED  |
+| CRATE_RANDOM_LOOT                      | [...]   | SEEDED  |
+| recipe_classic_burger                  | {...}   | SEEDED  |
+| recipe_cheeseburger                    | {...}   | SEEDED  |
+| recipe_egg_burger                      | {...}   | SEEDED  |
+| recipe_bacon_burger                    | {...}   | SEEDED  |
+| recipe_fish_fillet                     | {...}   | SEEDED  |
+| recipe_spicy_burger                    | {...}   | SEEDED  |
+| recipe_shrimp_burger                   | {...}   | SEEDED  |
+| recipe_crab_burger                     | {...}   | SEEDED  |
+| recipe_tuna_melt                       | {...}   | SEEDED  |
+| recipe_fries_dish                      | {...}   | SEEDED  |
+| recipe_onion_rings_dish                | {...}   | SEEDED  |
+| recipe_strawberry_milkshake            | {...}   | SEEDED  |
+| COOKING_XP_BY_TIER                     | {...}   | SEEDED  |
+| RESTAURANT_TIER_SLOT_LIMITS            | {1:3,2:5,3:8,4:12,5:16} | SEEDED  |
+| RESTAURANT_BASE_CUSTOMERS_RATE         | {...}   | SEEDED  |
+| DISH_DEMAND_WEIGHT                     | {...}   | SEEDED  |
+| staff_head_chef                        | {...}   | SEEDED  |
+| staff_maitre_d                         | {...}   | SEEDED  |
+| staff_promoter                         | {...}   | SEEDED  |
+| staff_cleaner                          | {...}   | SEEDED  |
+| staff_guard                            | {...}   | SEEDED  |
 
 ---
 
