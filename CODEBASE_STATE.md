@@ -7,54 +7,55 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [2.7] — [Farm: harvestPlot, harvest-plot/index.ts]
+Task: [2.8] — [Farm: rollGrade, harvest-plot/index.ts]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/functions/harvest-plot/index.ts — harvestPlot Edge Function
-- [x] supabase/functions/harvest-plot/index_test.ts — test file with mocked Supabase client
+- [x] supabase/functions/harvest-plot/index.ts — rollGrade implementation and harvestPlot integration
+- [x] supabase/functions/harvest-plot/index_test.ts — test file with mocked Supabase client/random
 
 Done When:
-- T2.7.1–T2.7.14 all pass
-- Harvest adds available yield to inventory by rolled grade
-- Steal pool, wither penalty, bug penalty, and minimum 1 yield enforced
-- GROWING throws PLOT_NOT_READY; EMPTY throws PLOT_EMPTY
-- Annual crops reset to EMPTY; perpetual crops transition to needsWater:true and keep cropId
-- Harvest awards crop XP and farming skill XP
-- INVENTORY_FULL is captured in itemsFailedDueToFullInventory without aborting harvest
+- T2.8.1–T2.8.10 all pass
+- rollGrade is pure and returns only valid grades
+- Base grade rates are fetched once in harvestPlot and passed to rollGrade
+- Fertiliser, farming skill, and watering boosts are applied and Normal is reduced with a 1% floor
+- Rates are re-normalised to sum to 1.0
+- Roll order evaluates highest rarity first
+- Seeded/mocked random tests are deterministic
 
 KEY IMPLEMENTATION NOTES:
-- Loads farm_plots and skills from players.
-- Fetches crop config and harvest constants via getConfigs.
-- rollGrade is a Task 2.8 stub returning Normal by default.
-- Adds harvested crops through addItemToInventory only.
-- Captures INVENTORY_FULL failures per grade and continues.
-- Returns HarvestResult: { success, itemsHarvested, itemsFailedDueToFullInventory, xpAwarded, yieldPenalties, plotTransition }.
+- rollGrade(cropId, plot, farmingSkillLevel, baseRates) is pure and performs zero DB calls.
+- calculateGradeRates exposes the normalised rates for tests and future reuse.
+- calculatePreNormalisationNormalRate exposes the Normal floor check.
+- harvestPlot now fetches GRADE_* base rates in its existing getConfigs batch.
+- harvestPlot passes baseRates into rollGrade for each harvested unit.
 
 TEST CASES SUMMARY:
-- T2.7.1: Clean harvest, no steal — 7 units added, plotTransition EMPTY
-- T2.7.2: Partial steal taken — 5 units added
-- T2.7.3: Full pool stolen — 4 units added
-- T2.7.4: Withered penalty — 4 units
-- T2.7.5: Bug penalty — 4 units
-- T2.7.6: Both penalties — 2 units
-- T2.7.7: Minimum 1 — 1 unit
-- T2.7.8: Harvest GROWING — throws PLOT_NOT_READY
-- T2.7.9: Harvest EMPTY — throws PLOT_EMPTY
-- T2.7.10: Annual resets — cropId:null, state EMPTY
-- T2.7.11: Perpetual transitions — needsWater:true, cropId kept
-- T2.7.12: Tier-1 XP — 10 XP + 10 farming skill XP
-- T2.7.13: Tier-3 XP — 30 XP + 30 farming skill XP
-- T2.7.14: Inventory full partial — one grade added, one grade in itemsFailed list
+- T2.8.1: Base distribution — 10,000 seeded rolls within tolerances
+- T2.8.2: Rates sum to 1.0
+- T2.8.3: Max fertiliser effect — Bronze/Silver increase, Normal reduced
+- T2.8.4: Skill 10 vs 0 — non-Normal grades increase
+- T2.8.5: Waterings 3 vs 0 — non-Normal grades increase
+- T2.8.6: Always valid grade
+- T2.8.7: Pure — no Supabase calls and no state changes
+- T2.8.8: Deterministic with seeded random
+- T2.8.9: Legendary in 10M seeded/mock sample
+- T2.8.10: Normal floor
 
 ---
 
 ## PREVIOUS TASKS
 
+### Task 2.8 — COMPLETE
+Task: [2.8] — [Farm: rollGrade, harvest-plot/index.ts]
+Deliverables all complete. T2.8.1–T2.8.10 pass.
+rollGrade applies base rates, fertiliser, farming skill, and watering boosts, then normalises and rolls highest rarity first.
+SPEC_AMBIGUITY: Max V1 fertiliser, skill 10, and 3 waterings do not drive Normal below 1%, so floor behavior is only directly observable with out-of-range boost inputs.
+
 ### Task 2.7 — COMPLETE
 Task: [2.7] — [Farm: harvestPlot, harvest-plot/index.ts]
 Deliverables all complete. T2.7.1–T2.7.14 pass.
-harvestPlot calculates stolen/penalized yield, adds inventory through helper, awards XP stubs, and resets annual/perpetual plots.
+harvestPlot calculates stolen/penalized yield, adds inventory through helper, awards XP stubs, and resets annual/perpetual plots. Updated by Task 2.8 to use real rollGrade.
 SPEC_AMBIGUITY: Top-level throws list says NEEDS_WATER should throw PLOT_NOT_READY, but Step 2 requires PLOT_EMPTY.
 
 ### Task 2.6 — COMPLETE
@@ -143,10 +144,10 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 
 | Table               | Status  | Notes                                              |
 |---------------------|---------|----------------------------------------------------|
-| players             | PENDING | Main player row. JSONB cols: farm_plots, skills, inventory_slots, restaurant, etc. neighbour_score INTEGER NOT NULL DEFAULT 50 (resolved ambiguity 1.2). |
-| inventory           | PENDING | One row per (player_id, item_id, grade). UNIQUE constraint on all three. |
-| coin_transactions   | PENDING | Audit log. idempotency_key UNIQUE constraint.      |
-| game_config         | PENDING | key TEXT PK, value TEXT (JSON-encoded).            |
+| players             | MIGRATED | Main player row. JSONB cols: farm_plots, skills, inventory_slots, restaurant, etc. neighbour_score INTEGER NOT NULL DEFAULT 50 (resolved ambiguity 1.2). |
+| inventory           | MIGRATED | One row per (player_id, item_id, grade). UNIQUE constraint on all three. |
+| coin_transactions   | MIGRATED | Audit log. idempotency_key UNIQUE constraint.      |
+| game_config         | MIGRATED | key TEXT PK, value TEXT (JSON-encoded).            |
 
 ---
 
@@ -155,11 +156,12 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 
 | File                        | Status  | Contents                              |
 |-----------------------------|---------|---------------------------------------|
-| 001_initial_schema.sql      | PENDING | All tables + RLS policies             |
-| 005_rpc_debit_coins.sql     | PENDING | debit_coins() Postgres function (SELECT FOR UPDATE, UPDATE players, INSERT coin_transactions) |
-| 003_rpc_credit_coins.sql    | PENDING | credit_coins() Postgres function      |
-| 004_add_neighbour_score.sql | PENDING | ALTER TABLE players ADD COLUMN neighbour_score INTEGER NOT NULL DEFAULT 50 |
-| seed_game_config.sql        | PENDING | All balance constants + 11 crop configs |
+| 001_initial_schema.sql      | APPLIED | All tables + RLS policies             |
+| 003_rpc_credit_coins.sql    | APPLIED | credit_coins() Postgres function      |
+| 004_add_neighbour_score.sql | APPLIED | ALTER TABLE players ADD COLUMN neighbour_score INTEGER NOT NULL DEFAULT 50 |
+| 005_rpc_debit_coins.sql     | APPLIED | debit_coins() Postgres function (SELECT FOR UPDATE, UPDATE players, INSERT coin_transactions) |
+| 006_add_sabotage_log.sql    | APPLIED | Adds sabotage_log column to players   |
+| seed_game_config.sql        | APPLIED | All balance constants + 11 crop configs |
 
 ---
 
@@ -187,7 +189,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 2.4  | getFarmState               | supabase/functions/get-farm-state/index.ts     | COMPLETE | Max 2 DB queries. Returns EnrichedPlot[].    |
 | 2.5  | waterPlot                  | supabase/functions/water-plot/index.ts         | COMPLETE | Moves plantedAt backwards. Contains STUBs (7.1).|
 | 2.6  | applyFertiliser            | supabase/functions/apply-fertiliser/index.ts   | COMPLETE | Stores bronzeBoost/silverBoost on plot. Contains STUBs (7.1, 7.3, 10.1, 12.1). |
-| 2.7  | harvestPlot                | supabase/functions/harvest-plot/index.ts       | COMPLETE | Harvests yield, awards XP, resets/updates plot. Contains STUBs (2.8, 10.1, 10.2). |
+| 2.7  | harvestPlot                | supabase/functions/harvest-plot/index.ts       | COMPLETE | Harvests yield, rolls grades, awards XP, resets/updates plot. Contains STUBs (10.1, 10.2). |
+| 2.8  | rollGrade                  | supabase/functions/harvest-plot/index.ts       | COMPLETE | Pure grade roller integrated into harvestPlot. |
 
 ---
 
@@ -329,6 +332,7 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | 1.6  | getInventory required by CODEBASE_STATE.md but exact return shape/error cases not defined in task prompt | Implemented `{ playerId, category, items }`, optional category filter, DB_ERROR only |
 | 1.7  | T1.7.2 says 0 Wooden Planks should throw INSUFFICIENT_QUANTITY, but removeItemFromInventory throws ITEM_NOT_FOUND when no stack exists | Test uses a zero-quantity mocked stack to exercise the specified INSUFFICIENT_QUANTITY path without changing the Task 1.6 helper contract |
 | 2.7  | Top-level throws list says NEEDS_WATER should throw PLOT_NOT_READY, but Step 2 requires PLOT_EMPTY | Followed Step 2 exact error string: PLOT_EMPTY |
+| 2.8  | Max V1 fertiliser, skill 10, and 3 waterings do not drive Normal below 1%, so floor behavior is not observable under only V1 max boosts | Implemented floor exactly and tested V1 max plus an out-of-range boost case for the floor branch |
 
 ---
 
@@ -341,7 +345,6 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | incrementDailyHelpActions | water-plot      | Task 7.1   | Always succeeds                |
 | awardXP                 | water-plot        | Task 10.1  | Logs but does not write        |
 | sendNotification        | water-plot        | Task 12.1  | Logs but does not send         |
-| rollGrade               | harvest-plot      | Task 2.8   | Returns Normal                 |
 | awardXP                 | harvest-plot      | Task 10.1  | Logs but does not write        |
 | awardSkillXP            | harvest-plot      | Task 10.2  | Logs but does not write        |
 

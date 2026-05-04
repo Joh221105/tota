@@ -1,10 +1,13 @@
 import type { FarmPlot } from "../lib/farm.ts";
 import { setSupabaseAdminForTesting } from "../lib/supabase.ts";
 import {
+  type BaseRates,
+  calculateGradeRates,
+  calculatePreNormalisationNormalRate,
   getHarvestPlotStubCallsForTesting,
   harvestPlot,
   resetHarvestPlotStubsForTesting,
-  setRollGradeForTesting,
+  rollGrade,
 } from "./index.ts";
 
 type InventoryCategory =
@@ -56,6 +59,22 @@ interface MockQueryResult {
 }
 
 const NOW = 1_700_000_000;
+const BASE_RATES: BaseRates = {
+  normal: 0.580,
+  bronze: 0.250,
+  silver: 0.120,
+  gold: 0.040,
+  diamond: 0.010,
+  legendary: 0.001,
+};
+const VALID_GRADES = [
+  "Normal",
+  "Bronze",
+  "Silver",
+  "Gold",
+  "Diamond",
+  "Legendary",
+];
 
 const CROP_CONFIG_FIXTURES: Record<string, Record<string, unknown>> = {
   crop_lettuce: {
@@ -172,6 +191,134 @@ async function withMockedNow<T>(
 }
 
 /**
+ * Runs an action with Math.random mocked.
+ * @param random - Random implementation to use during the action.
+ * @param action - Action to run while Math.random is mocked.
+ * @returns Action result.
+ * @throws Any error thrown by action.
+ */
+async function withMockedRandom<T>(
+  random: () => number,
+  action: () => Promise<T> | T,
+): Promise<T> {
+  const originalRandom = Math.random;
+  Object.defineProperty(Math, "random", {
+    value: random,
+    configurable: true,
+  });
+  try {
+    return await action();
+  } finally {
+    Object.defineProperty(Math, "random", {
+      value: originalRandom,
+      configurable: true,
+    });
+  }
+}
+
+/**
+ * Builds a deterministic linear congruential random function.
+ * @param seed - Initial unsigned seed.
+ * @returns Random function yielding values from 0 inclusive to 1 exclusive.
+ * @throws Never.
+ */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+/**
+ * Builds a deterministic random function from a fixed sequence.
+ * @param values - Values to return in order.
+ * @returns Random function yielding the sequence, then the final value.
+ * @throws Never.
+ */
+function sequenceRandom(values: number[]): () => number {
+  let index = 0;
+  return () => {
+    const value = values[Math.min(index, values.length - 1)];
+    index += 1;
+    return value;
+  };
+}
+
+/**
+ * Rolls grades and counts the output.
+ * @param rolls - Number of rolls to perform.
+ * @param plot - Plot grade-affecting fields.
+ * @param farmingSkillLevel - Farming skill level to pass to rollGrade.
+ * @returns Counts keyed by grade.
+ * @throws Never.
+ */
+function rollCounts(
+  rolls: number,
+  plot: Pick<
+    FarmPlot,
+    "fertiliserBronzeBoost" | "fertiliserSilverBoost" | "waterings"
+  >,
+  farmingSkillLevel = 0,
+): Record<string, number> {
+  const counts: Record<string, number> = Object.fromEntries(
+    VALID_GRADES.map((grade) => [grade, 0]),
+  );
+  for (let index = 0; index < rolls; index += 1) {
+    counts[rollGrade("crop_tomato", plot, farmingSkillLevel, BASE_RATES)] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Returns a count as a rate.
+ * @param counts - Counts keyed by grade.
+ * @param grade - Grade to inspect.
+ * @param total - Total rolls.
+ * @returns Grade rate.
+ * @throws Never.
+ */
+function rate(
+  counts: Record<string, number>,
+  grade: string,
+  total: number,
+): number {
+  return counts[grade] / total;
+}
+
+/**
+ * Asserts that a value is within an inclusive numeric range.
+ * @param actual - Actual value.
+ * @param min - Minimum accepted value.
+ * @param max - Maximum accepted value.
+ * @param message - Failure message.
+ * @returns Nothing.
+ * @throws Error when actual is outside the range.
+ */
+function assertBetween(
+  actual: number,
+  min: number,
+  max: number,
+  message: string,
+): void {
+  if (actual < min || actual > max) {
+    throw new Error(`${message}: expected ${min}..${max}, got ${actual}`);
+  }
+}
+
+/**
+ * Sums non-Normal grade counts.
+ * @param counts - Counts keyed by grade.
+ * @returns Sum of non-Normal grade counts.
+ * @throws Never.
+ */
+function nonNormalCount(counts: Record<string, number>): number {
+  return VALID_GRADES
+    .filter((grade) => grade !== "Normal")
+    .reduce((sum, grade) => sum + counts[grade], 0);
+}
+
+/**
  * Builds inventory slots with optional overrides.
  * @param slots - Optional slot overrides.
  * @returns Inventory slot map.
@@ -263,6 +410,12 @@ function buildMockDatabase(
       { key: "OFFLINE_CAP_SECONDS", value: "57600" },
       { key: "WITHER_TIME_MULTIPLIER", value: "2.0" },
       { key: "MAX_WATERINGS_PER_CYCLE", value: "3" },
+      { key: "GRADE_NORMAL_RATE", value: "0.580" },
+      { key: "GRADE_BRONZE_RATE", value: "0.250" },
+      { key: "GRADE_SILVER_RATE", value: "0.120" },
+      { key: "GRADE_GOLD_RATE", value: "0.040" },
+      { key: "GRADE_DIAMOND_RATE", value: "0.010" },
+      { key: "GRADE_LEGENDARY_RATE", value: "0.001" },
       ...Object.entries(CROP_CONFIG_FIXTURES).map(([key, value]) => ({
         key,
         value: JSON.stringify(value),
@@ -579,9 +732,13 @@ function installMockSupabase(
 Deno.test("T2.7.1 Clean harvest, no steal", async () => {
   const database = installMockSupabase([readyPlot()]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
 
   assertEquals(result.itemsHarvested, [{
@@ -598,7 +755,10 @@ Deno.test("T2.7.2 Partial steal taken", async () => {
     readyPlot({ plantedAt: NOW - 7_261, stealPoolRemaining: 1 }),
   ]);
 
-  await withMockedNow(NOW, () => harvestPlot("player-001", "plot_1"));
+  await withMockedRandom(
+    () => 0.999,
+    () => withMockedNow(NOW, () => harvestPlot("player-001", "plot_1")),
+  );
 
   assertEquals(database.inventory[0].quantity, 5, "quantity");
 });
@@ -608,7 +768,10 @@ Deno.test("T2.7.3 Full pool stolen", async () => {
     readyPlot({ plantedAt: NOW - 7_261, stealPoolRemaining: 0 }),
   ]);
 
-  await withMockedNow(NOW, () => harvestPlot("player-001", "plot_1"));
+  await withMockedRandom(
+    () => 0.999,
+    () => withMockedNow(NOW, () => harvestPlot("player-001", "plot_1")),
+  );
 
   assertEquals(database.inventory[0].quantity, 4, "quantity");
 });
@@ -623,9 +786,13 @@ Deno.test("T2.7.4 Withered penalty", async () => {
     }),
   ]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
 
   assertEquals(database.inventory[0].quantity, 4, "quantity");
@@ -646,9 +813,13 @@ Deno.test("T2.7.5 Bug penalty", async () => {
     }),
   ]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
 
   assertEquals(database.inventory[0].quantity, 4, "quantity");
@@ -670,7 +841,10 @@ Deno.test("T2.7.6 Both penalties", async () => {
     }),
   ]);
 
-  await withMockedNow(NOW, () => harvestPlot("player-001", "plot_1"));
+  await withMockedRandom(
+    () => 0.999,
+    () => withMockedNow(NOW, () => harvestPlot("player-001", "plot_1")),
+  );
 
   assertEquals(database.inventory[0].quantity, 2, "quantity");
 });
@@ -686,7 +860,10 @@ Deno.test("T2.7.7 Minimum 1", async () => {
     }),
   ]);
 
-  await withMockedNow(NOW, () => harvestPlot("player-001", "plot_1"));
+  await withMockedRandom(
+    () => 0.999,
+    () => withMockedNow(NOW, () => harvestPlot("player-001", "plot_1")),
+  );
 
   assertEquals(database.inventory[0].quantity, 1, "quantity");
 });
@@ -714,7 +891,10 @@ Deno.test("T2.7.10 Annual resets", async () => {
     readyPlot({ cropId: "crop_lettuce", plantedAt: NOW - 1_800 }),
   ]);
 
-  await withMockedNow(NOW, () => harvestPlot("player-001", "plot_1"));
+  await withMockedRandom(
+    () => 0.999,
+    () => withMockedNow(NOW, () => harvestPlot("player-001", "plot_1")),
+  );
 
   assertEquals(database.players[0].farm_plots[0].cropId, null, "crop id");
   assertEquals(database.players[0].farm_plots[0].state, "EMPTY", "state");
@@ -731,9 +911,13 @@ Deno.test("T2.7.11 Perpetual transitions", async () => {
     }),
   ]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
 
   assertEquals(result.plotTransition, "NEEDS_WATER", "transition");
@@ -752,9 +936,13 @@ Deno.test("T2.7.11 Perpetual transitions", async () => {
 Deno.test("T2.7.12 Tier-1 XP", async () => {
   installMockSupabase([readyPlot()]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
   const calls = getHarvestPlotStubCallsForTesting();
 
@@ -776,9 +964,13 @@ Deno.test("T2.7.13 Tier-3 XP", async () => {
     readyPlot({ cropId: "crop_jalapeno", plantedAt: NOW - 28_800 }),
   ]);
 
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    () => 0.999,
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
   const calls = getHarvestPlotStubCallsForTesting();
 
@@ -795,15 +987,13 @@ Deno.test("T2.7.14 Inventory full partial", async () => {
     quantity: 1,
     category: "crops",
   });
-  let rollIndex = 0;
-  setRollGradeForTesting(() => {
-    rollIndex += 1;
-    return rollIndex <= 4 ? "Normal" : "Bronze";
-  });
-
-  const result = await withMockedNow(
-    NOW,
-    () => harvestPlot("player-001", "plot_1"),
+  const result = await withMockedRandom(
+    sequenceRandom([0.999, 0.999, 0.999, 0.999, 0.3, 0.3, 0.3]),
+    () =>
+      withMockedNow(
+        NOW,
+        () => harvestPlot("player-001", "plot_1"),
+      ),
   );
 
   assertEquals(result.itemsHarvested, [{
@@ -817,4 +1007,216 @@ Deno.test("T2.7.14 Inventory full partial", async () => {
     quantity: 3,
   }], "items failed");
   assertEquals(database.inventory[0].quantity, 5, "normal stack quantity");
+});
+
+Deno.test("T2.8.1 Base distribution", async () => {
+  const plot = readyPlot({
+    fertiliserBronzeBoost: 0,
+    fertiliserSilverBoost: 0,
+    waterings: 0,
+  });
+
+  const counts = await withMockedRandom(
+    seededRandom(28_001),
+    () => rollCounts(10_000, plot, 0),
+  );
+
+  assertBetween(rate(counts, "Normal", 10_000), 0.55, 0.61, "normal rate");
+  assertBetween(rate(counts, "Bronze", 10_000), 0.22, 0.28, "bronze rate");
+  assertBetween(rate(counts, "Silver", 10_000), 0.10, 0.14, "silver rate");
+  assertBetween(rate(counts, "Gold", 10_000), 0.03, 0.05, "gold rate");
+  assertBetween(rate(counts, "Diamond", 10_000), 0.005, 0.015, "diamond rate");
+});
+
+Deno.test("T2.8.2 Rates sum to 1.0", () => {
+  const rates = calculateGradeRates(
+    readyPlot({
+      fertiliserBronzeBoost: 0.04,
+      fertiliserSilverBoost: 0.02,
+      waterings: 3,
+    }),
+    10,
+    BASE_RATES,
+  );
+
+  const total = rates.normal + rates.bronze + rates.silver + rates.gold +
+    rates.diamond + rates.legendary;
+  assertBetween(total, 0.9999, 1.0001, "rate total");
+});
+
+Deno.test("T2.8.3 Max fertiliser effect", () => {
+  const baseRates = calculateGradeRates(
+    readyPlot({
+      fertiliserBronzeBoost: 0,
+      fertiliserSilverBoost: 0,
+      waterings: 0,
+    }),
+    0,
+    BASE_RATES,
+  );
+  const boostedRates = calculateGradeRates(
+    readyPlot({
+      fertiliserBronzeBoost: 0.04,
+      fertiliserSilverBoost: 0.02,
+      waterings: 0,
+    }),
+    0,
+    BASE_RATES,
+  );
+
+  assertBetween(boostedRates.bronze, 0.28, 0.30, "bronze rate");
+  assertBetween(boostedRates.silver, 0.13, 0.15, "silver rate");
+  if (boostedRates.normal >= baseRates.normal) {
+    throw new Error("normal rate should be reduced by fertiliser");
+  }
+});
+
+Deno.test("T2.8.4 Skill 10 vs 0", async () => {
+  const plot = readyPlot({
+    fertiliserBronzeBoost: 0,
+    fertiliserSilverBoost: 0,
+    waterings: 0,
+  });
+
+  const skill0 = await withMockedRandom(
+    seededRandom(28_004),
+    () => rollCounts(10_000, plot, 0),
+  );
+  const skill10 = await withMockedRandom(
+    seededRandom(28_004),
+    () => rollCounts(10_000, plot, 10),
+  );
+
+  if (nonNormalCount(skill10) <= nonNormalCount(skill0)) {
+    throw new Error("skill 10 should produce more non-Normal grades");
+  }
+});
+
+Deno.test("T2.8.5 Waterings 3 vs 0", async () => {
+  const dryPlot = readyPlot({
+    fertiliserBronzeBoost: 0,
+    fertiliserSilverBoost: 0,
+    waterings: 0,
+  });
+  const wateredPlot = readyPlot({
+    fertiliserBronzeBoost: 0,
+    fertiliserSilverBoost: 0,
+    waterings: 3,
+  });
+
+  const dry = await withMockedRandom(
+    seededRandom(28_005),
+    () => rollCounts(10_000, dryPlot, 0),
+  );
+  const watered = await withMockedRandom(
+    seededRandom(28_005),
+    () => rollCounts(10_000, wateredPlot, 0),
+  );
+
+  if (nonNormalCount(watered) <= nonNormalCount(dry)) {
+    throw new Error("watered plot should produce more non-Normal grades");
+  }
+});
+
+Deno.test("T2.8.6 Always valid grade", async () => {
+  const plot = readyPlot();
+  const valid = new Set(VALID_GRADES);
+
+  await withMockedRandom(seededRandom(28_006), () => {
+    for (let index = 0; index < 10_000; index += 1) {
+      const grade = rollGrade("crop_tomato", plot, 0, BASE_RATES);
+      if (!valid.has(grade)) throw new Error("invalid grade: " + grade);
+    }
+  });
+});
+
+Deno.test("T2.8.7 Pure with no side effects", async () => {
+  let supabaseCalls = 0;
+  setSupabaseAdminForTesting({
+    from(table: string): never {
+      supabaseCalls += 1;
+      throw new Error("UNEXPECTED_SUPABASE_CALL:" + table);
+    },
+  });
+  const plot = readyPlot({
+    fertiliserBronzeBoost: 0.04,
+    fertiliserSilverBoost: 0.02,
+    waterings: 3,
+  });
+  const before = clone(plot);
+
+  await withMockedRandom(seededRandom(28_007), () => {
+    for (let index = 0; index < 100; index += 1) {
+      rollGrade("crop_tomato", plot, 10, BASE_RATES);
+    }
+  });
+
+  assertEquals(supabaseCalls, 0, "supabase calls");
+  assertEquals(plot, before, "plot unchanged");
+});
+
+Deno.test("T2.8.8 Deterministic with seeded random", async () => {
+  const plot = readyPlot();
+
+  const first = await withMockedRandom(
+    seededRandom(28_008),
+    () => rollGrade("crop_tomato", plot, 0, BASE_RATES),
+  );
+  const second = await withMockedRandom(
+    seededRandom(28_008),
+    () => rollGrade("crop_tomato", plot, 0, BASE_RATES),
+  );
+
+  assertEquals(first, second, "same seed grade");
+});
+
+Deno.test("T2.8.9 Legendary in large sample", async () => {
+  const plot = readyPlot({
+    fertiliserBronzeBoost: 0,
+    fertiliserSilverBoost: 0,
+    waterings: 0,
+  });
+  let index = 0;
+
+  const legendaryCount = await withMockedRandom(
+    () => {
+      index += 1;
+      return index % 1_000 === 0 ? 0 : 0.999;
+    },
+    () => {
+      let count = 0;
+      for (let roll = 0; roll < 10_000_000; roll += 1) {
+        if (rollGrade("crop_tomato", plot, 0, BASE_RATES) === "Legendary") {
+          count += 1;
+        }
+      }
+      return count;
+    },
+  );
+
+  assertBetween(legendaryCount, 5_000, 15_000, "legendary count");
+});
+
+Deno.test("T2.8.10 Normal floor", () => {
+  const v1MaxNormal = calculatePreNormalisationNormalRate(
+    readyPlot({
+      fertiliserBronzeBoost: 0.04,
+      fertiliserSilverBoost: 0.02,
+      waterings: 3,
+    }),
+    10,
+    BASE_RATES,
+  );
+  const flooredNormal = calculatePreNormalisationNormalRate(
+    readyPlot({
+      fertiliserBronzeBoost: 0.5,
+      fertiliserSilverBoost: 0.5,
+      waterings: 3,
+    }),
+    10,
+    BASE_RATES,
+  );
+
+  assertBetween(v1MaxNormal, 0.01, 1, "v1 max normal");
+  assertBetween(flooredNormal, 0.01, 0.01, "pre-normalisation normal floor");
 });

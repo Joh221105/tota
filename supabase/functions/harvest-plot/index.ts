@@ -38,6 +38,30 @@ export interface SkillXpAwardCall {
   amount: number;
 }
 
+export type Grade =
+  | "Normal"
+  | "Bronze"
+  | "Silver"
+  | "Gold"
+  | "Diamond"
+  | "Legendary";
+
+export interface BaseRates {
+  normal: number;
+  bronze: number;
+  silver: number;
+  gold: number;
+  diamond: number;
+  legendary: number;
+}
+
+export type GradeRates = BaseRates;
+
+export type RollGradePlot = Pick<
+  FarmPlot,
+  "fertiliserBronzeBoost" | "fertiliserSilverBoost" | "waterings"
+>;
+
 interface PlayerFarmRow {
   farm_plots: FarmPlot[];
   skills?: {
@@ -75,7 +99,6 @@ interface PlayerFarmQuery {
 
 const xpAwardCalls: XpAwardCall[] = [];
 const skillXpAwardCalls: SkillXpAwardCall[] = [];
-let rollGradeImpl: (...args: unknown[]) => string = () => "Normal";
 
 /**
  * Parses farm constants from game_config values.
@@ -93,6 +116,23 @@ function parseConstants(configs: Record<string, unknown>): PlotConstants {
 }
 
 /**
+ * Parses grade base rates from game_config values.
+ * @param configs - Parsed game_config values keyed by config key.
+ * @returns Base grade rates for rollGrade.
+ * @throws Never.
+ */
+function parseBaseRates(configs: Record<string, unknown>): BaseRates {
+  return {
+    normal: Number(configs["GRADE_NORMAL_RATE"]),
+    bronze: Number(configs["GRADE_BRONZE_RATE"]),
+    silver: Number(configs["GRADE_SILVER_RATE"]),
+    gold: Number(configs["GRADE_GOLD_RATE"]),
+    diamond: Number(configs["GRADE_DIAMOND_RATE"]),
+    legendary: Number(configs["GRADE_LEGENDARY_RATE"]),
+  };
+}
+
+/**
  * Returns crop harvest XP from crop duration and perpetual status.
  * @param cropConfig - Crop config used for the harvested plot.
  * @returns XP amount awarded for harvesting the crop.
@@ -106,14 +146,111 @@ export function getCropXP(cropConfig: CropConfig): number {
 }
 
 /**
- * Rolls one harvested unit's grade.
- * STUB: replaced by Task 2.8.
- * @param args - Future rollGrade arguments.
- * @returns The rolled grade; V1 stub returns Normal.
+ * Calculates the effective grade roll rates after fertiliser, skill, and watering boosts.
+ * PURE FUNCTION: this performs zero database calls and makes no persistent writes.
+ * @param plot - Farm plot grade-affecting fields.
+ * @param farmingSkillLevel - Player farming skill level.
+ * @param baseRates - Base grade rates fetched by caller from game_config.
+ * @returns Normalised grade rates that sum to 1.0.
  * @throws Never.
  */
-export function rollGrade(...args: unknown[]): string {
-  return rollGradeImpl(...args);
+export function calculateGradeRates(
+  plot: RollGradePlot,
+  farmingSkillLevel: number,
+  baseRates: BaseRates,
+): GradeRates {
+  const rates = { ...baseRates };
+
+  rates.bronze += plot.fertiliserBronzeBoost;
+  rates.silver += plot.fertiliserSilverBoost;
+
+  const skillBoost = farmingSkillLevel * 0.002;
+  rates.bronze += skillBoost * 0.40;
+  rates.silver += skillBoost * 0.30;
+  rates.gold += skillBoost * 0.20;
+  rates.diamond += skillBoost * 0.08;
+  rates.legendary += skillBoost * 0.02;
+
+  const waterBoost = plot.waterings * 0.005;
+  rates.bronze += waterBoost * 0.40;
+  rates.silver += waterBoost * 0.30;
+  rates.gold += waterBoost * 0.20;
+  rates.diamond += waterBoost * 0.08;
+  rates.legendary += waterBoost * 0.02;
+
+  const totalAdded = (rates.bronze + rates.silver + rates.gold + rates.diamond +
+    rates.legendary) -
+    (baseRates.bronze + baseRates.silver + baseRates.gold +
+      baseRates.diamond + baseRates.legendary);
+  rates.normal = Math.max(0.01, rates.normal - totalAdded);
+
+  const total = rates.normal + rates.bronze + rates.silver + rates.gold +
+    rates.diamond + rates.legendary;
+  for (const key of Object.keys(rates) as Array<keyof GradeRates>) {
+    rates[key] /= total;
+  }
+
+  return rates;
+}
+
+/**
+ * Calculates the unnormalised Normal rate after boosts and the 1% floor.
+ * PURE FUNCTION: this performs zero database calls and makes no persistent writes.
+ * @param plot - Farm plot grade-affecting fields.
+ * @param farmingSkillLevel - Player farming skill level.
+ * @param baseRates - Base grade rates fetched by caller from game_config.
+ * @returns Normal grade rate before final normalisation.
+ * @throws Never.
+ */
+export function calculatePreNormalisationNormalRate(
+  plot: RollGradePlot,
+  farmingSkillLevel: number,
+  baseRates: BaseRates,
+): number {
+  // SPEC_AMBIGUITY: Max V1 fertiliser, skill 10, and 3 waterings do not drive Normal below 1%, so floor behavior is only directly observable with out-of-range boost inputs.
+  const skillBoost = farmingSkillLevel * 0.002;
+  const waterBoost = plot.waterings * 0.005;
+  const totalAdded = plot.fertiliserBronzeBoost +
+    plot.fertiliserSilverBoost + skillBoost + waterBoost;
+  return Math.max(0.01, baseRates.normal - totalAdded);
+}
+
+/**
+ * Rolls one harvested unit's grade.
+ * PURE FUNCTION: this performs zero database calls and makes no persistent writes.
+ * @param cropId - Crop being harvested; reserved for crop-specific V2 rates.
+ * @param plot - Farm plot grade-affecting fields.
+ * @param farmingSkillLevel - Player farming skill level.
+ * @param baseRates - Base grade rates fetched by caller from game_config.
+ * @returns One rolled grade.
+ * @throws Never.
+ */
+export function rollGrade(
+  cropId: string,
+  plot: RollGradePlot,
+  farmingSkillLevel: number,
+  baseRates: BaseRates,
+): Grade {
+  void cropId;
+  const rates = calculateGradeRates(plot, farmingSkillLevel, baseRates);
+  const random = Math.random();
+  let cumulative = 0;
+
+  for (
+    const [grade, rate] of [
+      ["Legendary", rates.legendary],
+      ["Diamond", rates.diamond],
+      ["Gold", rates.gold],
+      ["Silver", rates.silver],
+      ["Bronze", rates.bronze],
+      ["Normal", rates.normal],
+    ] as Array<[Grade, number]>
+  ) {
+    cumulative += rate;
+    if (random < cumulative) return grade;
+  }
+
+  return "Normal";
 }
 
 /**
@@ -153,26 +290,13 @@ export async function awardSkillXP(
 }
 
 /**
- * Resets V1 stub call records and rollGrade override for tests.
+ * Resets V1 stub call records for tests.
  * @returns Nothing.
  * @throws Never.
  */
 export function resetHarvestPlotStubsForTesting(): void {
   xpAwardCalls.length = 0;
   skillXpAwardCalls.length = 0;
-  rollGradeImpl = () => "Normal";
-}
-
-/**
- * Overrides the rollGrade stub for tests.
- * @param implementation - Roll grade function to use until reset.
- * @returns Nothing.
- * @throws Never.
- */
-export function setRollGradeForTesting(
-  implementation: (...args: unknown[]) => string,
-): void {
-  rollGradeImpl = implementation;
 }
 
 /**
@@ -228,11 +352,18 @@ export async function harvestPlot(
     "OFFLINE_CAP_SECONDS",
     "WITHER_TIME_MULTIPLIER",
     "MAX_WATERINGS_PER_CYCLE",
+    "GRADE_NORMAL_RATE",
+    "GRADE_BRONZE_RATE",
+    "GRADE_SILVER_RATE",
+    "GRADE_GOLD_RATE",
+    "GRADE_DIAMOND_RATE",
+    "GRADE_LEGENDARY_RATE",
     plot.cropId,
   ];
   const configs = await getConfigs(configKeys);
   const cropConfig = parseCropConfig(plot.cropId, configs[plot.cropId]);
   const consts = parseConstants(configs);
+  const baseRates = parseBaseRates(configs);
   const stateResult = calculatePlotState(
     plot,
     Math.floor(Date.now() / 1000),
@@ -262,7 +393,7 @@ export async function harvestPlot(
   const farmingSkillLevel = player.skills?.farming?.level ?? 0;
   const gradeMap = new Map<string, number>();
   for (let index = 0; index < available; index += 1) {
-    const grade = rollGrade(plot.cropId, plot, farmingSkillLevel);
+    const grade = rollGrade(plot.cropId, plot, farmingSkillLevel, baseRates);
     gradeMap.set(grade, (gradeMap.get(grade) ?? 0) + 1);
   }
 
