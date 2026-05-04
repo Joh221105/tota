@@ -7,49 +7,63 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [3.4] — [Fishing: startFishingSession, submitFishingResult, fishing/index.ts]
+Task: [4.2] — [Cooking: startCookingJob, collectCookingOutput, cooking/index.ts]
 Status: COMPLETE
 
 Deliverables:
-- [x] supabase/functions/fishing/index.ts — startFishingSession, submitFishingResult, rollFishingGrade, rollFromWeightTable
-- [x] supabase/functions/fishing/index_test.ts — test file with mocked Supabase client
-- [x] supabase/seed/seed_fishing_config.sql — fishing pools, durations, expiry, legendary chance
+- [x] supabase/functions/cooking/index.ts — startCookingJob, collectCookingOutput
+- [x] supabase/functions/cooking/index_test.ts — test file with mocked Supabase client
+- [x] supabase/seed/seed_cooking_config.sql — 12 cooking recipes + COOKING_XP_BY_TIER
 
 Done When:
-- T3.4.1–T3.4.11 all pass
-- startFishingSession deducts bait, writes session to players.active_fishing_session, returns token + progressDurationSeconds
-- submitFishingResult validates token + expiry, rolls fish + grade, adds to inventory, clears session, awards XP
-- Grade distribution varies by completionPercent (impatient/std/patient)
-- Legendary ghostcarp chance only on bait_special; triggers sendNotification
+- T4.2.1–T4.2.10 all pass
+- startCookingJob validates all inputs before removal, writes slot RUNNING to players.cooking_slots, awards XP + cooking skill XP from COOKING_XP_BY_TIER
+- Slot c3 throws SLOT_NOT_UNLOCKED:c3 below level 25; slot c4 throws SLOT_NOT_UNLOCKED:c4 below level 40
+- collectCookingOutput rolls output grade from inputGrades, adds dish_ output to cooked_dishes inventory, clears slot; PAUSES on INVENTORY_FULL
 
 KEY IMPLEMENTATION NOTES:
-- active_fishing_session lives in players.active_fishing_session JSONB: {token, baitType, startedAt, expiresAt} | null.
-- Valid baits: 'bait_basic', 'bait_fly', 'bait_special'. Anything else throws INVALID_BAIT_TYPE.
-- FISHING_SESSION_EXPIRY_SECONDS fetched from game_config (300s).
-- FISHING_PROGRESS_DURATION fetched from game_config as Record<string,number>: {bait_basic:60, bait_fly:50, bait_special:90}.
-- Fish pools fetched from game_config: fishing_pool_bait_basic, fishing_pool_bait_fly, fishing_pool_bait_special.
-- rollFishingGrade(completionPercent): <0.5 → impatient (+15% Normal), >=0.5<1.0 → std, ==1.0 → patient (-10% Normal, +5% Silver, +4% Gold, +1% Diamond).
-- FISH_RARITY and FISH_XP are hardcoded maps (no balance reason to configure).
-- Legendary ghostcarp: only bait_special, LEGENDARY_CHANCE_SPECIAL from game_config (0.0002).
-- Session cleared (set to null) on any successful submitFishingResult.
-- awardXP and awardSkillXP are stubs. sendNotification stub on legendary catch.
+- cooking_slots lives in players.cooking_slots JSONB column (slotIds c1,c2,c3,c4).
+- CookingSlot shape matches ProcessingSlot: {slotId, recipeId, state:'EMPTY'|'RUNNING'|'COMPLETE'|'PAUSED', startedAt, inputGrades}.
+- inputGrades param to startCookingJob is Record<itemId, grade>; stored flat array (one entry per qty unit).
+- Grade output reuses Task 4.1 weighted average rollOutputGrade.
+- Cooking recipe configs use concrete inventory item IDs (processed_bun, animal_beef, crop_lettuce, etc.) and dish_ output IDs.
+- COOKING_XP_BY_TIER fetched from game_config; no hardcoded XP values in implementation.
+- PAUSED state keeps recipeId + inputGrades; collectCookingOutput retries and clears when inventory has space.
 
 TEST CASES SUMMARY:
-- T3.4.1: Start session deducts bait — token returned, bait removed from inventory
-- T3.4.2: No bait available — throws INSUFFICIENT_QUANTITY
-- T3.4.3: Already active session — throws FISHING_SESSION_ACTIVE
-- T3.4.4: Early reel grades (1000 submits, completionPercent:0.1) — Normal > 70%
-- T3.4.5: Full bar grades (1000 submits, completionPercent:1.0) — Silver+Gold > standard distribution
-- T3.4.6: Session expired (submit 310s after start) — throws SESSION_EXPIRED
-- T3.4.7: Wrong token — throws INVALID_SESSION_TOKEN
-- T3.4.8: Session cleared on submit — active_fishing_session = null
-- T3.4.9: Fly bait salmon (1000 sessions) — salmon ≈ 50% (±8%)
-- T3.4.10: Legendary XP (mocked roll) — 500 XP, sendNotification called
-- T3.4.11: Basic bait duration — progressDurationSeconds:60
+- T4.2.1: Start Classic Burger — ingredients removed, c1 RUNNING
+- T4.2.2: Collect Cheeseburger — dish_cheeseburger in cooked_dishes
+- T4.2.3: Grade inheritance — Gold+Gold+Normal skews Silver/Gold
+- T4.2.4: Slot c3 locked at 24 — throws SLOT_NOT_UNLOCKED:c3
+- T4.2.5: Slot c3 unlocked at 25 — success
+- T4.2.6: Slot c4 at Level 40 — success
+- T4.2.7: Cooking paused on full — slot PAUSED
+- T4.2.8: Tier-2 XP — 40 XP + 40 cooking skill XP
+- T4.2.9: Pre-validation — throws INSUFFICIENT_INGREDIENTS, nothing removed
+- T4.2.10: All 12 recipes accessible — getConfig(recipeId) succeeds
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 4.2 — COMPLETE
+Task: [4.2] — [Cooking: startCookingJob, collectCookingOutput]
+Deliverables all complete. T4.2.1–T4.2.10 pass.
+startCookingJob validates all inputs before removal, consumes ingredients through inventory helpers, writes RUNNING cooking slot, enforces c3/c4 level gates, and awards XP + cooking skill XP from COOKING_XP_BY_TIER. collectCookingOutput adds dish outputs through inventory helpers, pauses on full cooked_dishes inventory, and clears completed slots.
+SPEC_AMBIGUITY: Task 4.2 inherits Task 4.1 PAUSED behavior; implementation treats PAUSED as a retryable collectible state.
+SPEC_AMBIGUITY: Task 4.2 says cooking recipes use the same structure as processing recipes, where examples use outputQty but pseudocode used outputQuantity.
+SPEC_AMBIGUITY: Task 4.2 names a cooking side recipe recipe_fries, but Task 4.1 already uses recipe_fries for processing fries; implementation uses recipe_fries_dish for the cooked side dish config key.
+SPEC_AMBIGUITY: Cooking recipe inputs are listed as shorthand names (bun, beef, lettuce); implementation maps them to concrete V1 inventory item IDs such as processed_bun, animal_beef, crop_lettuce.
+
+### Task 4.1 — COMPLETE
+Task: [4.1] — [Processing: startProcessingJob, calculateSlotState, collectProcessingOutput]
+Deliverables all complete. T4.1.1–T4.1.15 pass.
+startProcessingJob validates all inputs before removal, consumes ingredients through inventory helpers, writes RUNNING processing slot, and awards 20 XP. collectProcessingOutput adds outputs through inventory helpers, pauses on full inventory, clears completed slots, and credits crate coins through creditCoins.
+SPEC_AMBIGUITY: Recipe examples use outputQty, but pseudocode reads recipe.outputQuantity.
+SPEC_AMBIGUITY: The grade probability table stops at weight 5 although Legendary has weight 6; implementation clamps averages above 5 to the weight-5 row.
+SPEC_AMBIGUITY: PAUSED resumes conflicts with calculateSlotState returning PAUSED; implementation treats PAUSED as a collectible retry state.
+SPEC_AMBIGUITY: recipe_recycle_mixed uses any_junk as an input item, but inventory stores concrete item IDs.
+SPEC_AMBIGUITY: random_normal_crop/random_bronze_crop are placeholders, not concrete item IDs; implementation rolls uniformly from the V1 crop catalog.
 
 ### Task 3.4 — COMPLETE
 Task: [3.4] — [Fishing: startFishingSession, submitFishingResult, fishing/index.ts]
@@ -194,7 +208,9 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | seed_game_config.sql        | APPLIED | All balance constants + 11 crop configs |
 | seed_animal_config.sql      | APPLIED | V1 animal configs                     |
 | seed_trap_config.sql        | APPLIED | V1 trap configs + trap roll constants |
-| seed_fishing_config.sql     | PENDING | File added. Fishing pools, durations, expiry, legendary chance |
+| seed_fishing_config.sql     | APPLIED | Fishing pools, durations, expiry, legendary chance             |
+| seed_processing_config.sql  | PENDING | 14 recipe configs + CRATE_RANDOM_LOOT                          |
+| seed_cooking_config.sql     | PENDING | 12 cooking recipes + COOKING_XP_BY_TIER                        |
 
 ---
 
@@ -227,6 +243,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 3.2  | animals                    | supabase/functions/animals/index.ts            | COMPLETE | feedAnimal and collectAnimalProduce. Contains STUBs (7.1, 7.3, 10.1, 10.2, 12.1). |
 | 3.3  | traps                      | supabase/functions/traps/index.ts              | COMPLETE | calculateTrapState and collectTrap. Contains STUBs (10.1, 10.2). |
 | 3.4  | fishing                    | supabase/functions/fishing/index.ts            | COMPLETE | startFishingSession, submitFishingResult. Contains STUBs (10.1, 10.2, 12.1). |
+| 4.1  | processing                 | supabase/functions/processing/index.ts         | COMPLETE | startProcessingJob, calculateSlotState, collectProcessingOutput, rollOutputGrade, rollCrateLoot. |
+| 4.2  | cooking                    | supabase/functions/cooking/index.ts            | COMPLETE | startCookingJob, collectCookingOutput. Contains STUBs (10.1, 10.2). |
 
 ---
 
@@ -310,6 +328,46 @@ interface InventoryStack {
   quantity: number;  // 1–999
 }
 type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dishes'|'tools';
+
+// ProcessingSlot — stored in players.processing_slots JSONB array
+interface ProcessingSlot {
+  slotId: string;
+  recipeId: string | null;
+  state: 'EMPTY'|'RUNNING'|'COMPLETE'|'PAUSED';
+  startedAt: number | null;
+  inputGrades: string[];  // flat array, one entry per input unit
+}
+
+// ProcessingRecipe — parsed from game_config rows (key = recipeId)
+interface ProcessingRecipe {
+  inputs: { itemId: string; qty: number }[];
+  outputItemId: string;
+  outputQty: number;
+  durationSeconds: number;
+  unlockLevel: number;
+  recipeType: 'processing'|'recycler';
+}
+
+// CookingSlot — stored in players.cooking_slots JSONB array
+interface CookingSlot {
+  slotId: 'c1'|'c2'|'c3'|'c4';
+  recipeId: string | null;
+  state: 'EMPTY'|'RUNNING'|'COMPLETE'|'PAUSED';
+  startedAt: number | null;
+  inputGrades: string[];
+}
+
+// CookingRecipe — parsed from game_config rows (key = recipeId)
+interface CookingRecipe {
+  inputs: { itemId: string; qty: number }[];
+  outputItemId: string;
+  outputQty: number;
+  durationSeconds: number;
+  goldValue: number;
+  tier: 1|2|3|'side';
+  unlockLevel: number;
+  recipeType: 'cooking';
+}
 ```
 
 ---
@@ -361,6 +419,14 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | INVALID_SESSION_TOKEN                     | submitFishingResult        |
 | SESSION_EXPIRED                           | submitFishingResult        |
 | INVALID_COMPLETION_PERCENT                | submitFishingResult        |
+| SLOT_NOT_FOUND:{slotId}                   | startProcessingJob, collectProcessingOutput, startCookingJob, collectCookingOutput |
+| SLOT_OCCUPIED:{slotId}                    | startProcessingJob, startCookingJob |
+| SLOT_NOT_UNLOCKED:c3                      | startCookingJob            |
+| SLOT_NOT_UNLOCKED:c4                      | startCookingJob            |
+| RECIPE_NOT_FOUND:{recipeId}               | startProcessingJob, startCookingJob |
+| RECIPE_NOT_UNLOCKED                       | startProcessingJob, startCookingJob |
+| INSUFFICIENT_INGREDIENTS:{recipeId}:{itemId} | startProcessingJob, startCookingJob |
+| JOB_NOT_COMPLETE:{state}                  | collectProcessingOutput, collectCookingOutput |
 
 ---
 
@@ -492,12 +558,40 @@ type InventoryCategory = 'crops'|'fish'|'animal_produce'|'processed'|'cooked_dis
 | TRAP_WORN_NORMAL                       | 0.85    | SEEDED  |
 | TRAP_WORN_BRONZE                       | 0.12    | SEEDED  |
 | TRAP_WORN_SILVER                       | 0.03    | SEEDED  |
-| FISHING_PROGRESS_DURATION              | {...}   | PENDING |
-| FISHING_SESSION_EXPIRY_SECONDS         | 300     | PENDING |
-| LEGENDARY_CHANCE_SPECIAL               | 0.0002  | PENDING |
-| fishing_pool_bait_basic                | [...]   | PENDING |
-| fishing_pool_bait_fly                  | [...]   | PENDING |
-| fishing_pool_bait_special              | [...]   | PENDING |
+| FISHING_PROGRESS_DURATION              | {...}   | SEEDED  |
+| FISHING_SESSION_EXPIRY_SECONDS         | 300     | SEEDED  |
+| LEGENDARY_CHANCE_SPECIAL               | 0.0002  | SEEDED  |
+| fishing_pool_bait_basic                | [...]   | SEEDED  |
+| fishing_pool_bait_fly                  | [...]   | SEEDED  |
+| fishing_pool_bait_special              | [...]   | SEEDED  |
+| recipe_bun                             | {...}   | PENDING |
+| recipe_cheese                          | {...}   | PENDING |
+| recipe_pickles                         | {...}   | PENDING |
+| recipe_bacon                           | {...}   | PENDING |
+| recipe_ketchup                         | {...}   | PENDING |
+| recipe_mayo                            | {...}   | PENDING |
+| recipe_fries                           | {...}   | PENDING |
+| recipe_onion_rings                     | {...}   | PENDING |
+| recipe_fly_bait                        | {...}   | PENDING |
+| recipe_special_bait                    | {...}   | PENDING |
+| recipe_recycle_boot                    | {...}   | PENDING |
+| recipe_recycle_net                     | {...}   | PENDING |
+| recipe_recycle_crate                   | {...}   | PENDING |
+| recipe_recycle_mixed                   | {...}   | PENDING |
+| CRATE_RANDOM_LOOT                      | [...]   | PENDING |
+| recipe_classic_burger                  | {...}   | PENDING |
+| recipe_cheeseburger                    | {...}   | PENDING |
+| recipe_egg_burger                      | {...}   | PENDING |
+| recipe_bacon_burger                    | {...}   | PENDING |
+| recipe_fish_fillet                     | {...}   | PENDING |
+| recipe_spicy_burger                    | {...}   | PENDING |
+| recipe_shrimp_burger                   | {...}   | PENDING |
+| recipe_crab_burger                     | {...}   | PENDING |
+| recipe_tuna_melt                       | {...}   | PENDING |
+| recipe_fries_dish                      | {...}   | PENDING |
+| recipe_onion_rings_dish                | {...}   | PENDING |
+| recipe_strawberry_milkshake            | {...}   | PENDING |
+| COOKING_XP_BY_TIER                     | {...}   | PENDING |
 
 ---
 
