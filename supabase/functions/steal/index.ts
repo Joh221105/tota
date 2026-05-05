@@ -3,6 +3,7 @@ import { calculateNeighbourScoreTier } from "../get-player-profile/index.ts";
 import { getConfig, getConfigs } from "../lib/config.ts";
 import { debitCoins, validateCanAfford } from "../lib/economy.ts";
 import { addItemToInventory } from "../lib/inventory.ts";
+import { addNeighbourhoodFeedEvent } from "../neighbourhood-feed/index.ts";
 import type { FarmPlot } from "../lib/farm.ts";
 import { ensureSupabaseAdminFromEnv, supabaseAdmin } from "../lib/supabase.ts";
 
@@ -550,7 +551,14 @@ export async function attemptSteal(
     unitsStolen: unitsToSteal,
     anonymous: true,
   });
-  // SPEC_AMBIGUITY: Task 6.3 requires an addNeighbourhoodFeedEvent stub but does not define its signature, payload, or anonymity requirements.
+  await addNeighbourhoodFeedEvent(thiefPlayerId, "STEAL", {
+    targetPlayerId,
+    cropId,
+    unitsStolen: unitsToSteal,
+    anonymous: true,
+  }).catch(() => {
+    // Feed delivery is best-effort and must not roll back a completed steal.
+  });
 
   return {
     success: true,

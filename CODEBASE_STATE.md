@@ -7,46 +7,60 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [7.1] — [Friends: sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend, getFriendsList, hasHelpNeeded]
-Status: IN PROGRESS
+Task: [7.4] — [Neighbourhood feed + leaderboard]
+Status: COMPLETE
 
 Deliverables:
-- [ ] supabase/functions/friends/index.ts — sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend, getFriendsList, hasHelpNeeded
-- [ ] supabase/functions/friends/index_test.ts — T7.1 test cases with mocked Supabase client
-- [ ] supabase/migrations/008_add_friends_tables.sql — friend_requests + friendships tables
+- [x] supabase/functions/neighbourhood-feed/index.ts — addNeighbourhoodFeedEvent, getNeighbourhoodFeed, getNeighbourhoodLeaderboard, addLevelMilestoneFeedEvent
+- [x] supabase/functions/neighbourhood-feed/index_test.ts — T7.4 test cases with mocked Supabase client
+- [x] supabase/migrations/010_add_neighbourhood_feed.sql — neighbourhood_feed table, lifetime_stats column, feed trim trigger
 
 Done When:
-- T7.1.1–T7.1.9 all pass
-- sendFriendRequest inserts pending row, sends notification, blocks self-requests, duplicates, and already-friends
-- acceptFriendRequest inserts bilateral friendship rows (A,B) AND (B,A), updates request status, sends notification
-- declineFriendRequest updates request status to declined; only target player can decline
-- removeFriend deletes both directional rows from friendships
-- isMutualFriend replaces stub: single SELECT count ≥ 2 check on friendships table
-- getFriendsList returns profile + has_help_needed flag for each friend
-- hasHelpNeeded checks farm_plots (hasBugs/hasWeeds), fishing_traps (isWorn), animals (SAD/NEGLECTED happiness)
+- T7.4.1–T7.4.10 all pass
+- addNeighbourhoodFeedEvent inserts neighbourhood_feed rows for players in a neighbourhood and skips unassigned players
+- getNeighbourhoodFeed filters by player neighbourhood, excludes expired rows, sorts newest first, paginates, and adds timeAgoString
+- getNeighbourhoodLeaderboard returns top 10, player rank, player score, and category
+- Feed retention trims oldest entries beyond 200 through database trigger
+- Level 20 creates a milestone event; Level 15 does not
+- attemptSteal writes an anonymous STEAL feed event best-effort after successful steals
 
 KEY IMPLEMENTATION NOTES:
-- friendships is bilateral: insert (A,B) AND (B,A) on accept. isMutualFriend checks count ≥ 2.
-- isMutualFriend REPLACES the existing stub in water-plot, apply-fertiliser, animals, steal.
-- hasHelpNeeded calls getAnimalConfig per animal type — batch where possible to reduce DB calls.
-- sendNotification remains a stub (Task 12.1) — call it but do not block on it.
-- friend_requests and friendships tables need RLS enabled (service_role bypasses for Edge Functions).
-- New tables: friend_requests (id, from_id, to_id, status, sent_at), friendships (player_id, friend_id, created_at).
+- Feed events expire after 7 days.
+- Feed retention is implemented in migration as trg_trim_neighbourhood_feed, not inline in addNeighbourhoodFeedEvent.
+- Leaderboard category restaurant_earnings maps to lifetime_stats.restaurant_earnings_lifetime.
+- Level milestone helper treats multiples of 20 as V1 milestones.
+- Steal feed event_data excludes thief display/name fields and includes anonymous:true.
 
 TEST CASES SUMMARY:
-- T7.1.1: A sends request to B → pending row inserted, notification sent to B
-- T7.1.2: A sends duplicate request → throws ALREADY_SENT
-- T7.1.3: B accepts A's request → rows (A,B) AND (B,A) in friendships
-- T7.1.4: isMutualFriend(A,B) true after accept; isMutualFriend(B,A) true
-- T7.1.5: B declines → isMutualFriend = false
-- T7.1.6: A removes B → both rows deleted, isMutualFriend = false
-- T7.1.7: A sends to A → throws CANNOT_FRIEND_SELF
-- T7.1.8: Friend has hasBugs:true → has_help_needed:true in getFriendsList
-- T7.1.9: C tries to accept A→B request → throws REQUEST_NOT_FOUND
+- T7.4.1: Feed event added → appears in feed
+- T7.4.2: Multiple events → sorted newest first
+- T7.4.3: Expired event → not returned
+- T7.4.4: Steal event → event_data has no thief name
+- T7.4.5: Level 15 → no feed event
+- T7.4.6: Level 20 → feed event created
+- T7.4.7: Other neighbourhood events → filtered out
+- T7.4.8: 12 leaderboard players → exactly 10 entries
+- T7.4.9: Player ranked 14th → top 10 plus playerRank:14
+- T7.4.10: 201 feed events → oldest removed, 200 retained
+
+SPEC_AMBIGUITY: Task 7.4 only says level 15 is not a feed event and level 20 is; the full milestone cadence is unspecified. V1 treats multiples of 20 as level milestones.
+SPEC_AMBIGUITY: Task 7.4 category is "restaurant_earnings", but the documented players.lifetime_stats key is "restaurant_earnings_lifetime"; implementation maps the category to that stored key for ordering/scoring.
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 7.2 — COMPLETE
+Task: [7.2] — [Neighbourhood assignment + monthly inactive rotation]
+Deliverables all complete. T7.2.1–T7.2.8 pass.
+assignToNeighbourhood skips already-assigned players, prefers friends' neighbourhood with space, falls back to available neighbourhood, creates a new neighbourhood when all full, inserts membership, increments member_count, and writes players.neighbourhood_id. updateLastActive writes players.last_active_timestamp as current Unix seconds. runMonthlyRotation removes players inactive for more than 7 days.
+SPEC_AMBIGUITY: Task 7.2 pseudocode puts supabaseAdmin.rpc(...) inside update({member_count: ...}), but Supabase update values cannot be RPC calls; implementation uses increment_member_count/decrement_member_count RPCs directly as the task text requests for atomicity.
+
+### Task 7.1 — COMPLETE
+Task: [7.1] — [Friends: sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend, getFriendsList, hasHelpNeeded]
+Deliverables all complete. T7.1.1–T7.1.9 pass.
+sendFriendRequest inserts pending row, sends notification, blocks self-requests, duplicates, and already-friends. acceptFriendRequest inserts bilateral friendship rows, updates request status, and sends notification. declineFriendRequest updates status to declined. removeFriend deletes both friendship rows. isMutualFriend checks bilateral row count. getFriendsList returns public profile plus has_help_needed.
+SPEC_AMBIGUITY: None.
 
 ### Task 6.4 — COMPLETE
 Task: [6.4] — [Steal History + Neighbour Score Helpers]
