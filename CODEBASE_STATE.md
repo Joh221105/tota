@@ -7,43 +7,70 @@
 
 ## CURRENT TASK
 <!-- Update this before starting each session -->
-Task: [5.3] — [Restaurant Staff: hireStaff, upgradeStaff, calculateStaffBonuses]
-Status: COMPLETE
+Task: [7.1] — [Friends: sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend, getFriendsList, hasHelpNeeded]
+Status: IN PROGRESS
 
 Deliverables:
-- [x] supabase/functions/restaurant/index.ts — hireStaff, upgradeStaff, calculateStaffBonuses
-- [x] supabase/functions/restaurant/index_test.ts — T5.3 test cases with mocked Supabase client
-- [x] supabase/seed/seed_restaurant_config.sql — staff_head_chef, staff_maitre_d, staff_promoter, staff_cleaner, staff_guard
+- [ ] supabase/functions/friends/index.ts — sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend, getFriendsList, hasHelpNeeded
+- [ ] supabase/functions/friends/index_test.ts — T7.1 test cases with mocked Supabase client
+- [ ] supabase/migrations/008_add_friends_tables.sql — friend_requests + friendships tables
 
 Done When:
-- T5.3.1–T5.3.10 all pass
-- hireStaff fetches staff config, debits coins through debitCoins, writes restaurant.staff[staffType] tier 1
-- upgradeStaff debits upgrade cost through debitCoins and increments hired staff tier
-- calculateStaffBonuses is pure and returns head chef, maitre d, guard, promoter, and cleaner bonuses
+- T7.1.1–T7.1.9 all pass
+- sendFriendRequest inserts pending row, sends notification, blocks self-requests, duplicates, and already-friends
+- acceptFriendRequest inserts bilateral friendship rows (A,B) AND (B,A), updates request status, sends notification
+- declineFriendRequest updates request status to declined; only target player can decline
+- removeFriend deletes both directional rows from friendships
+- isMutualFriend replaces stub: single SELECT count ≥ 2 check on friendships table
+- getFriendsList returns profile + has_help_needed flag for each friend
+- hasHelpNeeded checks farm_plots (hasBugs/hasWeeds), fishing_traps (isWorn), animals (SAD/NEGLECTED happiness)
 
 KEY IMPLEMENTATION NOTES:
-- Restaurant state lives in players.restaurant JSONB column.
-- Staff records live in restaurant.staff as Record<staffType, StaffRecord>.
-- Staff configs are read from game_config keys staff_head_chef, staff_maitre_d, staff_promoter, staff_cleaner, staff_guard.
-- Head Chef tiers return revenue multipliers 1.15, 1.25, 1.40.
-- Maitre D returns customer multiplier 1.20 for any hired tier.
-- Guard tiers return steal reduction 0.30/0.50 and alerts true at tier 2+.
+- friendships is bilateral: insert (A,B) AND (B,A) on accept. isMutualFriend checks count ≥ 2.
+- isMutualFriend REPLACES the existing stub in water-plot, apply-fertiliser, animals, steal.
+- hasHelpNeeded calls getAnimalConfig per animal type — batch where possible to reduce DB calls.
+- sendNotification remains a stub (Task 12.1) — call it but do not block on it.
+- friend_requests and friendships tables need RLS enabled (service_role bypasses for Edge Functions).
+- New tables: friend_requests (id, from_id, to_id, status, sent_at), friendships (player_id, friend_id, created_at).
 
 TEST CASES SUMMARY:
-- T5.3.1: Hire Head Chef — 500g deducted, staff.head_chef.tier 1
-- T5.3.2: Hire twice throws STAFF_ALREADY_HIRED:head_chef
-- T5.3.3: Upgrade Head Chef t1 to t2 — 1500g deducted, tier 2
-- T5.3.4: Upgrade at max tier throws STAFF_AT_MAX_TIER:head_chef
-- T5.3.5: No staff neutral bonuses
-- T5.3.6: Head Chef t1 revenue multiplier 1.15
-- T5.3.7: Head Chef t2 revenue multiplier 1.25
-- T5.3.8: Guard t1 steal reduction 0.30, alerts false
-- T5.3.9: Guard t2 steal reduction 0.50, alerts true
-- T5.3.10: calculateStaffBonuses makes zero Supabase calls
+- T7.1.1: A sends request to B → pending row inserted, notification sent to B
+- T7.1.2: A sends duplicate request → throws ALREADY_SENT
+- T7.1.3: B accepts A's request → rows (A,B) AND (B,A) in friendships
+- T7.1.4: isMutualFriend(A,B) true after accept; isMutualFriend(B,A) true
+- T7.1.5: B declines → isMutualFriend = false
+- T7.1.6: A removes B → both rows deleted, isMutualFriend = false
+- T7.1.7: A sends to A → throws CANNOT_FRIEND_SELF
+- T7.1.8: Friend has hasBugs:true → has_help_needed:true in getFriendsList
+- T7.1.9: C tries to accept A→B request → throws REQUEST_NOT_FOUND
 
 ---
 
 ## PREVIOUS TASKS
+
+### Task 6.4 — COMPLETE
+Task: [6.4] — [Steal History + Neighbour Score Helpers]
+Deliverables all complete. T6.4.1–T6.4.10 pass.
+getPublicThiefStats returns public stats only. successRatePercent handles 0 attempts and rounds to 1 decimal. updateNeighbourScore clamps to 0–100. getDailyStrangerStealCount resets stale UTC dates on read. resetDailyStrangerSteals writes {count:0, resetDate:todayUTC}.
+SPEC_AMBIGUITY: None.
+
+### Task 6.3 — COMPLETE
+Task: [6.3] — [Steal: attemptSteal]
+Deliverables all complete. T6.3.1–T6.3.15 pass.
+attemptSteal performs validation, race guard, charge, farm pool decrement, inventory award, stats updates, anonymous notification, and result return.
+SPEC_AMBIGUITY: Task 6.3 requires an addNeighbourhoodFeedEvent stub but does not define its signature, payload, or anonymity requirements.
+
+### Task 6.2 — COMPLETE
+Task: [6.2] — [Steal: validateStealAttempt]
+Deliverables all complete. T6.2.1–T6.2.10 pass.
+validateStealAttempt returns structured validation results and performs no writes. Reads target level/neighbourhood_id, thief neighbourhood_id, thief stranger_steals_today, farm state, steal configs, and balance only. Uses validateCanAfford for affordability.
+SPEC_AMBIGUITY: calculatePlotState converts exhausted steal pools to RIPE, but T6.2.7 expects STEAL_POOL_EXHAUSTED for a target plot with stealPoolRemaining:0; implementation checks exhausted pool before the state error.
+
+### Task 6.1 — COMPLETE
+Task: [6.1] — [Steal: getStealableItems]
+Deliverables all complete. T6.1.1–T6.1.8 pass.
+getStealableItems reads target level, applies NEW_PLAYER_PROTECTION_LEVEL, uses getFarmState(targetPlayerId), filters STEALABLE plots with stealPoolRemaining > 0, fetches all STEAL_COST_* keys in one getConfigs call, and returns structured results without throwing. isMutualFriend is a V1 stub with test override; default true. Fox pet is a V1 stub; gradeVisible is always 'Unknown'.
+SPEC_AMBIGUITY: None.
 
 ### Task 5.3 — COMPLETE
 Task: [5.3] — [Restaurant Staff: hireStaff, upgradeStaff, calculateStaffBonuses]
@@ -211,6 +238,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | inventory           | MIGRATED | One row per (player_id, item_id, grade). UNIQUE constraint on all three. |
 | coin_transactions   | MIGRATED | Audit log. idempotency_key UNIQUE constraint.      |
 | game_config         | MIGRATED | key TEXT PK, value TEXT (JSON-encoded).            |
+| friend_requests     | PENDING  | id UUID PK, from_id, to_id, status (pending/accepted/declined), sent_at. RLS enabled. |
+| friendships         | PENDING  | (player_id, friend_id) composite PK. Bilateral: both directions inserted on accept. RLS enabled. |
 
 ---
 
@@ -224,6 +253,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 004_add_neighbour_score.sql | APPLIED | ALTER TABLE players ADD COLUMN neighbour_score INTEGER NOT NULL DEFAULT 50 |
 | 005_rpc_debit_coins.sql     | APPLIED | debit_coins() Postgres function (SELECT FOR UPDATE, UPDATE players, INSERT coin_transactions) |
 | 006_add_sabotage_log.sql    | APPLIED | Adds sabotage_log column to players   |
+| 007_add_steal_log.sql       | PENDING | ALTER TABLE players ADD COLUMN steal_log JSONB NOT NULL DEFAULT '[]' |
+| 008_add_friends_tables.sql  | PENDING | CREATE TABLE friend_requests + CREATE TABLE friendships (bilateral PK). RLS enabled on both. |
 | seed_game_config.sql        | APPLIED | All balance constants + 11 crop configs |
 | seed_animal_config.sql      | APPLIED | V1 animal configs                     |
 | seed_trap_config.sql        | APPLIED | V1 trap configs + trap roll constants |
@@ -266,6 +297,8 @@ Status: COMPLETE (T1.1.1–T1.1.12 all pass)
 | 4.1  | processing                 | supabase/functions/processing/index.ts         | COMPLETE | startProcessingJob, calculateSlotState, collectProcessingOutput, rollOutputGrade, rollCrateLoot. |
 | 4.2  | cooking                    | supabase/functions/cooking/index.ts            | COMPLETE | startCookingJob, collectCookingOutput. Contains STUBs (10.1, 10.2). |
 | 5.1-5.3 | restaurant              | supabase/functions/restaurant/index.ts         | COMPLETE | Menu listing/state, earnings, favoured dishes, and staff hire/upgrade. |
+| 6.1-6.4 | steal                   | supabase/functions/steal/index.ts              | COMPLETE | Steal UI, validation, execution, history, and score helpers. Fox pet stub (Task 11.2). |
+| 7.1  | friends                    | supabase/functions/friends/index.ts            | PENDING  | sendFriendRequest, acceptFriendRequest, declineFriendRequest, removeFriend, isMutualFriend (replaces stub), getFriendsList, hasHelpNeeded. |
 
 ---
 
@@ -484,13 +517,14 @@ interface CookingRecipe {
 
 | Stub Function           | Lives In          | Replace In | Behaviour Until Replaced       |
 |-------------------------|-------------------|------------|--------------------------------|
-| isMutualFriend          | water-plot        | Task 7.1   | Always returns true            |
-| incrementDailyHelpActions | water-plot      | Task 7.1   | Always succeeds                |
+| isMutualFriend          | water-plot        | Task 7.1 ← THIS TASK | Stub — replace by importing from friends/index.ts |
+| incrementDailyHelpActions | water-plot      | Task 7.3   | Always succeeds                |
 | awardXP                 | water-plot        | Task 10.1  | Logs but does not write        |
 | sendNotification        | water-plot        | Task 12.1  | Logs but does not send         |
 | awardXP                 | harvest-plot      | Task 10.1  | Logs but does not write        |
 | awardSkillXP            | harvest-plot      | Task 10.2  | Logs but does not write        |
-| isMutualFriend          | animals           | Task 7.1   | Always returns true            |
+| isMutualFriend          | animals           | Task 7.1 ← THIS TASK | Stub — replace by importing from friends/index.ts |
+| isMutualFriend          | steal             | Task 7.1 ← THIS TASK | Stub — replace by importing from friends/index.ts |
 | incrementDailyHelpActions | animals         | Task 7.3   | Always succeeds                |
 | awardXP                 | animals           | Task 10.1  | Logs but does not write        |
 | awardSkillXP            | animals           | Task 10.2  | Logs but does not write        |
@@ -500,6 +534,7 @@ interface CookingRecipe {
 | awardXP                 | fishing           | Task 10.1  | Logs but does not write        |
 | awardSkillXP            | fishing           | Task 10.2  | Logs but does not write        |
 | sendNotification        | fishing           | Task 12.1  | Logs but does not send         |
+| hasFoxPet               | steal             | Task 11.2  | Always false                   |
 
 ---
 
